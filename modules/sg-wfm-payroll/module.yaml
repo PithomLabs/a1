@@ -1,0 +1,36 @@
+module:
+  id: sg-wfm-payroll
+  name: Singapore WFM and Payroll
+  version: 0.1.0
+  description: >
+    Synthetic Singapore workforce management and payroll business environment.
+    First reference module for the WorkforceOps Lab platform.
+  status: experimental
+
+platform:
+  minimum_version: "0.1"
+
+capabilities:
+  - domain-model
+  - business-rules
+  - synthetic-data
+  - reference-oracle
+  - integrations
+  - fault-injection
+  - scenarios
+  - investigation-tools
+  - evaluation
+
+dependencies: []
+
+database:
+  schemas:
+    - shifthub
+    - payloop
+
+rules:
+  jurisdiction: SG
+  effective-dated: true
+
+entrypoint:
+  registration: Register

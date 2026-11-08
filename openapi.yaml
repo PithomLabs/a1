@@ -1,0 +1,281 @@
+openapi: 3.0.3
+info:
+  title: WorkforceOps Lab API
+  version: 0.1.0
+  description: |
+    Programmatic contract for the ShiftHub and PayLoop hosts. Every path carries
+    x-maturity: implemented paths run in the current build; draft paths are the
+    frozen contract for their phase and MUST NOT be served until implemented.
+    The console UI consumes the same application services; it never bypasses
+    service-level authorization.
+servers:
+  - url: http://localhost:8081
+    description: ShiftHub API (also serves the console in v0.1)
+  - url: http://localhost:8082
+    description: PayLoop API
+paths:
+  /healthz:
+    get:
+      x-maturity: implemented
+      summary: Liveness probe (no dependencies)
+      operationId: healthz
+      responses:
+        '200':
+          description: Process alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /readyz:
+    get:
+      x-maturity: implemented
+      summary: Readiness probe (includes database reachability)
+      operationId: readyz
+      responses:
+        '200':
+          description: Ready to serve
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '503':
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/status:
+    get:
+      x-maturity: implemented
+      summary: Module status for the serving host
+      operationId: moduleStatus
+      responses:
+        '200':
+          description: Serving module identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleStatus'
+  /api/v1/companies:
+    get:
+      x-maturity: draft
+      summary: List synthetic companies (Phase 2)
+      operationId: listCompanies
+      responses:
+        '200':
+          description: Paginated companies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/employees:
+    get:
+      x-maturity: draft
+      summary: List synthetic employees (Phase 2)
+      operationId: listEmployees
+      responses:
+        '200':
+          description: Paginated employees
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/workforce/roster:
+    get:
+      x-maturity: draft
+      summary: Inspect shift assignments (Phase 2)
+      operationId: getRoster
+      responses:
+        '200':
+          description: Roster entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/attendance:
+    get:
+      x-maturity: draft
+      summary: Inspect clock events and attendance (Phase 2)
+      operationId: listAttendance
+      responses:
+        '200':
+          description: Attendance records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/timesheets:
+    get:
+      x-maturity: draft
+      summary: Inspect approved timesheets (Phase 2)
+      operationId: listTimesheets
+      responses:
+        '200':
+          description: Timesheets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/payroll/runs:
+    get:
+      x-maturity: draft
+      summary: List payroll runs (Phase 2)
+      operationId: listPayrollRuns
+      responses:
+        '200':
+          description: Payroll runs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/payslips:
+    get:
+      x-maturity: draft
+      summary: Inspect itemised payslips (Phase 2)
+      operationId: listPayslips
+      responses:
+        '200':
+          description: Payslips
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/integrations/jobs:
+    get:
+      x-maturity: draft
+      summary: Inspect sync jobs and delivery attempts (Phase 3)
+      operationId: listIntegrationJobs
+      responses:
+        '200':
+          description: Integration jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/scenarios:
+    get:
+      x-maturity: draft
+      summary: List incident scenarios (Phase 3)
+      operationId: listScenarios
+      responses:
+        '200':
+          description: Scenarios
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/incidents:
+    get:
+      x-maturity: draft
+      summary: List support tickets (Phase 3)
+      operationId: listIncidents
+      responses:
+        '200':
+          description: Incident tickets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/investigations:
+    get:
+      x-maturity: draft
+      summary: List investigation records (Phase 4)
+      operationId: listInvestigations
+      responses:
+        '200':
+          description: Investigations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/evidence:
+    get:
+      x-maturity: draft
+      summary: Inspect evidence ledger entries (Phase 4)
+      operationId: listEvidence
+      responses:
+        '200':
+          description: Evidence entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/evaluations:
+    get:
+      x-maturity: draft
+      summary: Evaluation scorecards, evaluator role only (Phase 5)
+      operationId: listEvaluations
+      responses:
+        '200':
+          description: Evaluations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+  /api/v1/rules:
+    get:
+      x-maturity: draft
+      summary: Implemented rule packs and verification status (Phase 2)
+      operationId: listRules
+      responses:
+        '200':
+          description: Rule packs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+components:
+  schemas:
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+    ModuleStatus:
+      type: object
+      required: [module, service, version, status]
+      properties:
+        module:
+          type: string
+          example: sg-wfm-payroll
+        service:
+          type: string
+          example: shifthub
+        version:
+          type: string
+          example: 0.1.0
+        status:
+          type: string
+          example: skeleton
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: Internal server error
+        request_id:
+          type: string
+          format: uuid
+    Paginated:
+      type: object
+      required: [data, page, page_size, total]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 200
+          example: 50
+        total:
+          type: integer
+          minimum: 0

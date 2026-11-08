@@ -1,0 +1,152 @@
+version: '3'
+
+vars:
+  VERSION:
+    sh: git describe --tags --dirty --always 2>/dev/null || echo dev
+
+tasks:
+  setup:
+    desc: Install dependencies and prepare local environment files
+    cmds:
+      - go mod download
+      - cp -n .env.example .env 2>/dev/null || true
+      - 'echo "Next: docker compose up -d && task db:migrate"'
+
+  build:
+    desc: Build all binaries into build/
+    cmds:
+      - mkdir -p build
+      - go build -o build/shifthub-api ./cmd/shifthub-api
+      - go build -o build/payloop-api ./cmd/payloop-api
+      - go build -o build/sync-worker ./cmd/sync-worker
+      - go build -ldflags "-X main.version={{.VERSION}}" -o build/workforceops ./cmd/workforceops
+
+  test:
+    desc: Run unit tests (DB-gated tests skip without WORKFORCEOPS_TEST_DATABASE_URL)
+    cmds:
+      - go test ./...
+
+  test:db:
+    desc: Run the full suite including DB-gated tests (requires test database)
+    cmds:
+      - go test -count=1 ./...
+
+  lint:
+    desc: Format check, vet and dependency rules
+    cmds:
+      # gofmt is scoped to module dirs on purpose: unscoped 'gofmt -w .'
+      # would rewrite files under bchat/, which must stay read-only.
+      - test -z "$(gofmt -l cmd core modules migrations sdk examples tests)"
+      - go vet ./...
+      - task: validate:nodeps
+
+  validate:nodeps:
+    desc: Fail if lib/pq re-enters the dependency tree (pgx only)
+    cmds:
+      - '! grep -q "lib/pq" go.mod'
+
+  db:migrate:
+    desc: Apply pending core migrations
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops migrate up
+
+  db:status:
+    desc: Show recorded migration status
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops migrate status
+
+  db:start:
+    desc: Start local PostgreSQL
+    cmds:
+      - docker compose up -d
+
+  db:stop:
+    desc: Stop local PostgreSQL (data preserved)
+    cmds:
+      - docker compose stop
+
+  db:logs:
+    desc: Stream local PostgreSQL logs
+    cmds:
+      - docker compose logs -f postgres
+
+  db:reset:
+    desc: Destroy local database volume and re-init (deletes all local data)
+    prompt: Destroy ALL local database data and re-initialise?
+    cmds:
+      - docker compose down -v
+      - docker compose up -d
+
+  run:shifthub:
+    desc: Run the ShiftHub API (also serves the console UI in v0.1)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/shifthub-api
+
+  run:payloop:
+    desc: Run the PayLoop API
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/payloop-api
+
+  run:worker:
+    desc: Run the sync worker
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/sync-worker
+
+  web:run:
+    desc: Run the Support Engineering Lab web console (co-hosted on ShiftHub API)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/shifthub-api
+
+  seed:
+    desc: Generate the deterministic synthetic dataset (Phase 2)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops seed {{.CLI_ARGS}}
+
+  oracle:run:
+    desc: Run the independent reference oracle (Phase 2)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops oracle {{.CLI_ARGS}}
+
+  scenario:list:
+    desc: List incident scenarios (Phase 3)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops scenario {{.CLI_ARGS}}
+
+  scenario:run:
+    desc: Run a scenario, e.g. task scenario:run -- run INC-001 (Phase 3)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops scenario {{.CLI_ARGS}}
+
+  scenario:reset:
+    desc: Reset a scenario (Phase 3)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops scenario {{.CLI_ARGS}}
+
+  investigate:
+    desc: Run a CaseTrace investigation (Phase 4)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops investigate {{.CLI_ARGS}}
+
+  evaluate:
+    desc: Score investigations against ground truth (Phase 5)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops evaluate {{.CLI_ARGS}}
+
+  demo:
+    desc: Reproducible end-to-end demonstration (full chain in Phase 6)
+    dotenv: ['.env']
+    cmds:
+      - go run ./cmd/workforceops demo {{.CLI_ARGS}}

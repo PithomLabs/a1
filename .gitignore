@@ -1,0 +1,22 @@
+# Reference and planning inputs — never part of the a1 repository.
+bchat/
+plans/
+
+# Build output.
+build/
+
+# Local environment and secrets.
+.env
+.env.*.local
+*.log
+
+# Go caches if ever pointed at the workspace.
+.gocache/
+.gomodcache/
+
+# Editor and OS noise.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

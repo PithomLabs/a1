@@ -1,0 +1,49 @@
+# =============================================================================
+# DRAFT — UNVALIDATED. DO NOT DEPLOY.
+# Fly.io deployment is deferred per resolved Q1. When cloud deployment is
+# authorized, this file targets a DEDICATED non-production app (initial region
+# sin, subject to availability/capacity verification) — never the bchat app.
+# Secrets (DATABASE_URL etc.) must be set via `fly secrets`, never here.
+# =============================================================================
+
+app = 'a1-lab-nonprod-DRAFT'
+primary_region = 'sin'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[processes]
+  shifthub = '/app/shifthub-api'
+  payloop = '/app/payloop-api'
+  worker = '/app/sync-worker'
+
+[env]
+  A1_ENV = 'prod'
+  A1_LOG_FORMAT = 'json'
+  A1_SHIFTHUB_PORT = '8081'
+  A1_PAYLOOP_PORT = '8082'
+  TZ = 'UTC'
+
+[http_service]
+  internal_port = 8081
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['shifthub']
+
+  [http_service.concurrency]
+    type = 'connections'
+    hard_limit = 25
+    soft_limit = 20
+
+  [[http_service.checks]]
+    grace_period = '15s'
+    interval = '10s'
+    method = 'GET'
+    path = '/healthz'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
