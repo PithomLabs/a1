@@ -13,12 +13,9 @@ tasks:
       - 'echo "Next: docker compose up -d && task db:migrate"'
 
   build:
-    desc: Build all binaries into build/
+    desc: Build the single workforceops binary into build/
     cmds:
       - mkdir -p build
-      - go build -o build/shifthub-api ./cmd/shifthub-api
-      - go build -o build/payloop-api ./cmd/payloop-api
-      - go build -o build/sync-worker ./cmd/sync-worker
       - go build -ldflags "-X main.version={{.VERSION}}" -o build/workforceops ./cmd/workforceops
 
   test:
@@ -36,7 +33,7 @@ tasks:
     cmds:
       # gofmt is scoped to module dirs on purpose: unscoped 'gofmt -w .'
       # would rewrite files under bchat/, which must stay read-only.
-      - test -z "$(gofmt -l cmd core modules migrations sdk examples tests)"
+      - test -z "$(gofmt -l cmd core internal modules migrations sdk examples tests)"
       - go vet ./...
       - task: validate:nodeps
 
@@ -46,13 +43,13 @@ tasks:
       - '! grep -q "lib/pq" go.mod'
 
   db:migrate:
-    desc: Apply pending core migrations
+    desc: Apply pending core migrations (as migration_admin via $MIGRATION_DATABASE_URL)
     dotenv: ['.env']
     cmds:
       - go run ./cmd/workforceops migrate up
 
   db:status:
-    desc: Show recorded migration status
+    desc: Show recorded migration status (as migration_admin via $MIGRATION_DATABASE_URL)
     dotenv: ['.env']
     cmds:
       - go run ./cmd/workforceops migrate status
@@ -79,32 +76,14 @@ tasks:
       - docker compose down -v
       - docker compose up -d
 
-  run:shifthub:
-    desc: Run the ShiftHub API (also serves the console UI in v0.1)
+  serve:
+    desc: Run the single workforceops loopback API server (as app via $DATABASE_URL; superuser refused)
     dotenv: ['.env']
     cmds:
-      - go run ./cmd/shifthub-api
-
-  run:payloop:
-    desc: Run the PayLoop API
-    dotenv: ['.env']
-    cmds:
-      - go run ./cmd/payloop-api
-
-  run:worker:
-    desc: Run the sync worker
-    dotenv: ['.env']
-    cmds:
-      - go run ./cmd/sync-worker
-
-  web:run:
-    desc: Run the Support Engineering Lab web console (co-hosted on ShiftHub API)
-    dotenv: ['.env']
-    cmds:
-      - go run ./cmd/shifthub-api
+      - go run ./cmd/workforceops serve {{.CLI_ARGS}}
 
   seed:
-    desc: Generate the deterministic synthetic dataset (Phase 2)
+    desc: Load the deterministic synthetic dataset (as app via $DATABASE_URL)
     dotenv: ['.env']
     cmds:
       - go run ./cmd/workforceops seed {{.CLI_ARGS}}

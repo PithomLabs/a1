@@ -2,48 +2,62 @@
 
 ## What this is
 
-WorkforceOps Lab (`github.com/PithomLabs/a1`): an open-source Go platform for
-enterprise simulation, OJT and Tier 2 support-engineering assessment. Local
-PostgreSQL is the default data plane; Neon/Fly.io are optional. `bchat/` is a
-read-only reference — never modify it, never import from it.
+WorkforceOps Lab (`github.com/PithomLabs/a1`): an open-source Go HR/WFM/payroll
+backend for a fictional Singapore BPO. One binary, one API, one CLI, one
+PostgreSQL database. Local-first; cloud optional. `bchat/` is a read-only
+reference — never modify it, never import from it.
 
 ## Non-negotiable boundaries
 
-1. `core/` must never import `modules/` or `examples/` (enforced by
-   `tests/arch/boundary_test.go` with the real dep graph, not greps).
-2. The reference oracle must never import PayLoop calculation code (enforced by
-   an import test from Phase 2 on, plus separate human review).
-3. `lib/pq` is forbidden; `pgx` is the sole driver (`task validate:nodeps`).
-4. No cross-schema business reads between ShiftHub and PayLoop; sync happens
-   through the worker over APIs/payloads with correlation IDs.
-5. `evaluation_private` is visible to the evaluator role only. No hidden answer
-   may appear in API responses, templates, logs, HTML attributes or tool output
-   reachable by investigators. Leak scans enforce this.
-6. Read-only investigation: the agent path performs zero business writes.
-   Permissions live in Go + Postgres grants, never in prompts.
-7. Statutory rules need pinned official sources, effective dates, applicability
-   and golden tests. Unverified cases return `indeterminate` — never guess.
-8. No React/npm/CGO/`plugin`/Kafka/Redis. UI is Go templates + vendored HTMX.
+1. CLI and API invoke the same `internal/` services. No duplicated business
+   logic, no handler-side calculations.
+2. `rules/` packages are pure: stdlib plus `math/big` only (arch test
+   enforced). No DB, HTTP, or time-of-day calls inside calculations.
+3. No binary floating point for money. `NUMERIC(12,2)` storage, exact
+   intermediates, rounding only at verified statutory boundaries.
+4. Rates and thresholds are effective-dated rule data, never hardcoded
+   constants. Runs record the rule versions consumed.
+5. Statutory rules need pinned official sources, effective dates,
+   applicability, and golden tests. Unverified cases return `indeterminate`
+   or are rejected with a machine-readable code — never guessed.
+6. Quarantined fixtures can never load in statutory runners (test enforced).
+7. Corrections supersede via new auditable records; approved artifacts
+   (timesheets, runs, payslips, KETs, clock events) are never edited in place.
+8. No UI, no second service, no event bus, no RLS in v0.1. Runtime
+   multi-employer operation is deferred, but employer-scoped schema
+   readiness (employer_id boundary + composite keys) is mandatory.
+   Anything on that list needs a new decision, not a quiet addition.
 9. Never claim anonymization from validation, compliance from simulation, or
    production readiness from synthetic pass rates.
+
+## Statutory rule workflow
+
+All future L1 statutory/financial rules use the `rules/` Phys-Pseudo
+package standard (`docs/workforceops/rules/adaptation-spec.md`); L2
+selectively, L3 not required. Each payroll slice starts by advancing its
+package through the lifecycle: Go work begins at `GOLDENS_VERIFIED` with
+fixtures in hand, activation at `IMPLEMENTABLE` after independent review.
+Every `indeterminate`/`422` path maps to an open spec `?`, listed in the
+slice plan. Review checklist: every `derive` implemented, every `?` closed
+with pinned evidence or mapped to a blocked path, no fixture generated
+from the implementation.
 
 ## Commands
 
 ```bash
 task setup && task db:migrate          # first run (after docker compose up -d)
 task build && task test && task lint   # before finishing any change
-go test ./core/database/ -run TestMigrate -v   # needs WORKFORCEOPS_TEST_DATABASE_URL
 ```
 
 DB-gated tests skip without `WORKFORCEOPS_TEST_DATABASE_URL`. Set it to run them.
 
 ## Conventions
 
-- Env-first config (`core/config`); secrets via env/Fly secrets, never committed.
-- JSON error envelope `{ "error": "<message>" }`; request IDs on every request.
-- Migrations are goose `*.sql` + `Down` for local dev; roles ship separately.
-- sqlc (`sqlc.yaml`, pinned v1.30.0) generates query code into module packages;
-  hand-written pgx is allowed where sqlc is awkward — never another ORM.
-- Every phase ends at its gate: files changed, tests actually run + results,
+- Env-first config; secrets via env only, never committed.
+- JSON error envelope `{ "error": "<message>", "code": "<machine_code>" }`;
+  request IDs on every request.
+- Migrations are Goose `*.sql` with `Down` for local dev; roles ship separately.
+- Hand-written pgx with explicit SQL; `lib/pq` forbidden.
+- Every phase ends at its gate: files changed, tests actually run plus results,
   supported behavior, limitations, blockers, gate pass/fail. No gate is passed
   on unexecuted tests.

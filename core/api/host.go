@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 
 	"github.com/PithomLabs/a1/core/config"
@@ -17,12 +18,15 @@ import (
 
 // ServiceSpec describes one API host process.
 type ServiceSpec struct {
-	Name string // e.g. "shifthub-api"
+	Name string // e.g. "workforceops"
 	// PortEnv selects the port override variable: A1_<PortEnv>_PORT.
 	PortEnv     string
 	DefaultPort int
+	// Bind is the listen address; empty binds all interfaces.
+	// Single-user loopback servers set "127.0.0.1".
+	Bind string
 	// Register mounts the process's routes onto the shared host.
-	Register func(e *echo.Echo) error
+	Register func(e *echo.Echo, pool *pgxpool.Pool) error
 }
 
 // Run boots a service: config, logging, database, routes, graceful shutdown.
@@ -43,14 +47,18 @@ func Run(spec ServiceSpec) int {
 		return 1
 	}
 	defer pool.Close()
+	if err := database.RefusePrivilegedRuntime(ctx, pool); err != nil {
+		slog.Error("refusing privileged runtime connection", "error", err)
+		return 1
+	}
 
 	srv := New(cfg.IsProd())
 	srv.AttachPool(pool)
-	if err := spec.Register(srv.Echo); err != nil {
+	if err := spec.Register(srv.Echo, pool); err != nil {
 		slog.Error("route registration failed", "error", err)
 		return 1
 	}
-	addr := fmt.Sprintf(":%d", config.Port(spec.PortEnv, spec.DefaultPort))
+	addr := fmt.Sprintf("%s:%d", spec.Bind, config.Port(spec.PortEnv, spec.DefaultPort))
 	slog.Info("starting service", "service", spec.Name, "addr", addr)
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Start(addr) }()

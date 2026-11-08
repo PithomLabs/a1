@@ -25,6 +25,42 @@ type ReportedMigration struct {
 	AppliedAt time.Time
 }
 
+// Preflight fails loudly unless dsn connects as migration_admin to a
+// database with the app role and required extensions present. It runs
+// before MigrateUp so a wrong-role invocation explains itself instead of
+// applying half a chain or silently skipping protections.
+func Preflight(ctx context.Context, dsn string) error {
+	pool, err := Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("migration preflight: connect: %w", err)
+	}
+	defer pool.Close()
+	var who string
+	if err := pool.QueryRow(ctx, `SELECT current_user`).Scan(&who); err != nil {
+		return fmt.Errorf("migration preflight: identify role: %w", err)
+	}
+	if who != "migration_admin" {
+		return fmt.Errorf("migration preflight: connected as %q, want migration_admin (set MIGRATION_DATABASE_URL)", who)
+	}
+	var roles bool
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) = 2 FROM pg_roles WHERE rolname IN ('migration_admin', 'app')`).Scan(&roles); err != nil {
+		return fmt.Errorf("migration preflight: check roles: %w", err)
+	}
+	if !roles {
+		return fmt.Errorf("migration preflight: roles migration_admin/app missing: provision roles before migrating")
+	}
+	var exts bool
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) = 2 FROM pg_extension WHERE extname IN ('pgcrypto', 'btree_gist')`).Scan(&exts); err != nil {
+		return fmt.Errorf("migration preflight: check extensions: %w", err)
+	}
+	if !exts {
+		return fmt.Errorf("migration preflight: extensions pgcrypto/btree_gist missing: run the superuser bootstrap first")
+	}
+	return nil
+}
+
 // MigrateUp applies all pending migrations from fsys (goose *.sql at FS root)
 // using a dedicated connection. dsn must belong to the migration_admin role,
 // never a runtime application role.

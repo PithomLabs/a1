@@ -1,68 +1,64 @@
 # WorkforceOps Lab
 
-An open-source enterprise simulation, OJT and support-engineering assessment platform.
+An open-source Go-based enterprise HR, workforce-management and payroll application implementing realistic Singapore business rules and operational workflows, backed by PostgreSQL and populated with internally consistent synthetic business data.
 
-Individuals and organizations can create realistic business environments, import anonymized data, configure business workflows, execute operational transactions, simulate failures and investigate incidents.
+v0.1 is one integrated backend for a fictional Singapore BPO employer: hire an employee, schedule them, record actual work, approve hours, and produce a traceable monthly payroll result — through a CLI and REST API sharing the same services. No UI, no microservices, no training platform yet.
 
-Aspiring engineers use these environments to gain practical experience, prepare for interviews and demonstrate their troubleshooting capabilities. Organizations use the platform to reproduce business processes, test integrations, validate configurations and train their support teams.
-
-The architecture accommodates additional business modules, private customer logic and future enterprise features such as SSO.
-
-> **Status: Phase 1 skeleton.** The module builds, serves health probes, runs
-> migrations and exposes module status routes. Business functionality arrives
-> per the phased plan in `docs/workforceops/`. Nothing here is payroll,
+> **Status: pivoted to the final MVP.** Design docs describe the v0.1 target;
+> the scaffold is being restructured toward it. Nothing here is payroll,
 > compliance or production software.
 
 ## Quickstart (local-first, no accounts needed)
 
 ```bash
 cp .env.example .env            # then set POSTGRES_PASSWORD
-docker compose up -d            # local PostgreSQL 16
+docker compose up -d            # local PostgreSQL 16 (roles bootstrapped on first init)
 task setup                      # go mod download
-task db:migrate                 # apply core migrations
-task run:shifthub               # API + console on :8081
-task run:payloop                # API on :8082
-task run:worker                 # sync worker
+task db:migrate                 # apply migrations as migration_admin
+task serve                      # API on 127.0.0.1:8081 (loopback only, no auth in v0.1)
 ```
 
-Probes: `GET /healthz` (liveness), `GET /readyz` (readiness incl. database).
-Module status: `GET /api/v1/status` on either API.
+Two database roles, two connections: runtime (`serve`, CLI, seed) connects as
+`app` via `DATABASE_URL` and refuses superuser connections; migrations connect
+as `migration_admin` via `MIGRATION_DATABASE_URL` and refuse any other role.
+See `.env.example` and `docs/workforceops/database-design.md`.
 
-## Layout
+Probes: `GET /healthz` (liveness), `GET /readyz` (readiness incl. database).
+
+## Layout (target)
 
 ```text
-cmd/                 # shifthub-api, payloop-api, sync-worker, workforceops CLI
-core/                # platform kernel (must never import modules/ or examples/)
-modules/sg-wfm-payroll/  # Singapore WFM/payroll reference module
-sdk/module/          # module-authoring starter (Phase 7)
-examples/            # tiny second-module proof (Phase 7)
-migrations/core/     # kernel goose migrations
-web/static/          # local CSS + vendored HTMX (no CDN, no npm)
-scenarios/ fixtures/ # scenario definitions, fixed-seed fixtures
-tests/arch/          # architectural boundary tests
-docs/workforceops/   # audit, design artifacts, ADRs
+cmd/workforceops        # single binary: serve + business commands
+internal/               # platform, hr, wfm, attendance, payroll, audit services
+rules/<RULE-ID>/        # research packages + pure calculation code (stdlib + math/big only)
+migrations/             # single Goose set, public schema
+fixtures/               # deterministic seeds and golden fixtures
+tests/                  # contract, acceptance and architecture tests
+docs/workforceops/      # live design docs (parked/ holds pre-pivot material)
 ```
 
 ## Commands
 
-| Command | Purpose |
-|---|---|
-| `task build` / `task test` / `task lint` | Build, test, format+vet+dep rules |
-| `task db:migrate` / `task db:status` | Core migrations |
-| `task db:start` / `stop` / `logs` / `reset` | Local PostgreSQL lifecycle |
-| `task run:shifthub` / `run:payloop` / `run:worker` / `web:run` | Processes |
-| `task seed` / `oracle:run` / `scenario:*` / `investigate` / `evaluate` / `demo` | CLI surface (wired per phase; honest stubs until then) |
+```bash
+task build && task test && task lint   # before finishing any change
+task db:migrate                        # apply migrations
+task serve                             # run the API (after restructure)
+task demo                              # scripted acceptance run (Phase: acceptance)
+```
 
 DB-gated tests run when `WORKFORCEOPS_TEST_DATABASE_URL` is set, otherwise skip.
 
 ## Documentation
 
-- `docs/workforceops/repository-audit.md`, `refactor-plan.md` — Phase 0 audit
-- `docs/workforceops/architecture.md` — system design and phase plan
-- `docs/workforceops/decisions/` — architecture decision records
-- `openapi.yaml` — REST API contract (implemented vs draft marked per path)
+- `docs/workforceops/mvp-scope.md` — frozen v0.1 scope and boundaries
+- `docs/workforceops/domain-model.md` — entities and relationships
+- `docs/workforceops/singapore-rule-scope.md` — rule packs and verification status
+- `docs/workforceops/database-design.md` — tables, constraints, roles
+- `docs/workforceops/api-cli-contract.md` + `openapi.yaml` — CLI/API contract
+- `docs/workforceops/rule-source-register.md` — statutory provenance
+- `docs/workforceops/parked/` — pre-pivot material (not authoritative)
 - `AGENTS.md` — working agreements for coding agents
 
 ## License
 
-MIT, copyright Pithom Labs. See `LICENSE`.
+MIT

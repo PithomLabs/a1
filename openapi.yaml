@@ -3,16 +3,16 @@ info:
   title: WorkforceOps Lab API
   version: 0.1.0
   description: |
-    Programmatic contract for the ShiftHub and PayLoop hosts. Every path carries
-    x-maturity: implemented paths run in the current build; draft paths are the
-    frozen contract for their phase and MUST NOT be served until implemented.
-    The console UI consumes the same application services; it never bypasses
-    service-level authorization.
+    Single-application contract for the v0.1 integrated HR/WFM/payroll
+    backend. All resources are employer-scoped; rule packs are
+    jurisdiction-global and read-only. Every path carries x-maturity:
+    draft paths are the frozen contract for their slice and MUST NOT be
+    served until implemented. Serves on loopback only (127.0.0.1:8081);
+    there is no authentication in v0.1. Every employer-scoped path may
+    return 403 employer_context_rejected outside the configured context.
 servers:
-  - url: http://localhost:8081
-    description: ShiftHub API (also serves the console in v0.1)
-  - url: http://localhost:8082
-    description: PayLoop API
+  - url: http://127.0.0.1:8081
+    description: workforceops serve (loopback only)
 paths:
   /healthz:
     get:
@@ -44,179 +44,1147 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /api/v1/status:
+  /api/v1/employers:
+    post:
+      x-maturity: implemented
+      summary: Bootstrap the v0.1 employer (no employer context needed)
+      operationId: createEmployer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name, uen, address, jurisdiction]
+      responses:
+        '201':
+          description: Employer created
+          content:
+            application/json:
+              schema:
+                type: object
+        '200':
+          description: Employer already configured (safe repeat, existed=true)
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}:
     get:
       x-maturity: implemented
-      summary: Module status for the serving host
-      operationId: moduleStatus
+      summary: Show one employer record
+      operationId: showEmployer
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
       responses:
         '200':
-          description: Serving module identity
+          description: Employer
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ModuleStatus'
-  /api/v1/companies:
-    get:
-      x-maturity: draft
-      summary: List synthetic companies (Phase 2)
-      operationId: listCompanies
-      responses:
-        '200':
-          description: Paginated companies
+                type: object
+        '403':
+          description: Outside configured employer context
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/employees:
+                $ref: '#/components/schemas/Error'
+  /api/v1/employers/{employer_id}/employees:
     get:
-      x-maturity: draft
-      summary: List synthetic employees (Phase 2)
+      x-maturity: implemented
+      summary: List employees
       operationId: listEmployees
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
       responses:
         '200':
-          description: Paginated employees
+          description: Employees
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Create an employee with initial terms
+      operationId: createEmployee
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '201':
+          description: Created employee
+          content:
+            application/json:
+              schema:
+                type: object
+        '422':
+          description: Unsupported employment case
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/employers/{employer_id}/employees/{id}:
+    get:
+      x-maturity: implemented
+      summary: Show employee detail
+      operationId: showEmployee
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Employee
+          content:
+            application/json:
+              schema:
+                type: object
+    patch:
+      x-maturity: implemented
+      summary: Update employee status
+      operationId: updateEmployee
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [active, suspended, resigned, terminated]
+                reason:
+                  type: string
+                effective:
+                  type: string
+                  format: date
+      responses:
+        '200':
+          description: Updated employee
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/employees/{id}/terms:
+    get:
+      x-maturity: implemented
+      summary: Effective-dated employment terms history
+      operationId: listTerms
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Terms history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Add new effective-dated terms
+      operationId: addTerms
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201':
+          description: Created terms
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/employees/{id}/terms/{terms_id}/compensation:
+    get:
+      x-maturity: implemented
+      summary: List compensation lines under one terms row
+      operationId: listCompensation
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+        - name: terms_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Compensation lines
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Add a compensation line to one terms row
+      operationId: addCompensation
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+        - name: terms_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, code, amount_monthly, effective_from, reason]
+              properties:
+                kind:
+                  type: string
+                code:
+                  type: string
+                amount_monthly:
+                  type: string
+                effective_from:
+                  type: string
+                effective_to:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '201':
+          description: Created compensation line
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/employees/{id}/terms/{terms_id}/compensation/{line_id}/corrections:
+    post:
+      x-maturity: implemented
+      summary: Correct a compensation line, minting an audited successor
+      operationId: correctCompensation
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+        - name: terms_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: line_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_monthly, effective_from, reason]
+              properties:
+                amount_monthly:
+                  type: string
+                effective_from:
+                  type: string
+                effective_to:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '201':
+          description: Created compensation successor
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/employees/{id}/shg:
+    get:
+      x-maturity: implemented
+      summary: List SHG instructions for an employee
+      operationId: listShg
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: SHG instructions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Record an SHG instruction
+      operationId: setShg
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fund, status, source_declaration, effective_from]
+              properties:
+                fund:
+                  type: string
+                status:
+                  type: string
+                source_declaration:
+                  type: string
+                effective_from:
+                  type: string
+      responses:
+        '201':
+          description: Created SHG instruction
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/employees/{id}/ket:
+    get:
+      x-maturity: draft
+      summary: KET snapshots for an employee
+      operationId: listKet
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: KET snapshots
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Paginated'
-  /api/v1/workforce/roster:
+  /api/v1/employers/{employer_id}/clients:
     get:
-      x-maturity: draft
-      summary: Inspect shift assignments (Phase 2)
-      operationId: getRoster
+      x-maturity: implemented
+      summary: List clients
+      operationId: listClients
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
       responses:
         '200':
-          description: Roster entries
+          description: Clients
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/attendance:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Create a client
+      operationId: createClient
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '201':
+          description: Created client
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/programmes:
     get:
-      x-maturity: draft
-      summary: Inspect clock events and attendance (Phase 2)
+      x-maturity: implemented
+      summary: List programmes
+      operationId: listProgrammes
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Programmes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Create a programme
+      operationId: createProgramme
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '201':
+          description: Created programme
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/programmes/{id}/require-skills:
+    post:
+      x-maturity: implemented
+      summary: Set required programme skills
+      operationId: requireProgrammeSkills
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+      responses:
+        '200':
+          description: Required skills set
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/teams:
+    get:
+      x-maturity: implemented
+      summary: List teams and memberships
+      operationId: listTeams
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Teams
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Create a team
+      operationId: createTeam
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '201':
+          description: Created team
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/teams/{id}/members:
+    post:
+      x-maturity: implemented
+      summary: Add an employee to a team
+      operationId: addTeamMember
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employee, role, effective_from]
+              properties:
+                employee:
+                  type: string
+                role:
+                  type: string
+                  enum: [agent, lead, supervisor]
+                effective_from:
+                  type: string
+                  format: date
+      responses:
+        '201':
+          description: Created team membership
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/skills:
+    post:
+      x-maturity: implemented
+      summary: Assign a skill to an employee
+      operationId: assignSkill
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '201':
+          description: Created skill assignment
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/shift-templates:
+    get:
+      x-maturity: implemented
+      summary: List shift templates with segments
+      operationId: listShiftTemplates
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Create a shift template
+      operationId: createShiftTemplate
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '201':
+          description: Created template
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/rotations:
+    post:
+      x-maturity: implemented
+      summary: Assign a rotation pattern to an employee or team
+      operationId: assignRotation
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pattern, effective_from]
+              properties:
+                pattern:
+                  type: string
+                employee:
+                  type: string
+                team:
+                  type: string
+                effective_from:
+                  type: string
+                  format: date
+      responses:
+        '201':
+          description: Created rotation assignment
+          content:
+            application/json:
+              schema:
+                type: object
+    get:
+      x-maturity: implemented
+      summary: List rotation assignments
+      operationId: listRotations
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Rotation assignments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /api/v1/employers/{employer_id}/rosters:
+    get:
+      x-maturity: implemented
+      summary: List rosters
+      operationId: listRosters
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Rosters
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Create a draft roster
+      operationId: createRoster
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '201':
+          description: Created roster
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/rosters/{id}:
+    get:
+      x-maturity: implemented
+      summary: Show a roster with current assignments
+      operationId: showRoster
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Roster detail
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/rosters/{id}/assignments:
+    post:
+      x-maturity: implemented
+      summary: Assign an employee to a roster day
+      operationId: assignRoster
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employee, date]
+              properties:
+                employee:
+                  type: string
+                date:
+                  type: string
+                  format: date
+                template:
+                  type: string
+                rest_day:
+                  type: boolean
+      responses:
+        '201':
+          description: Created roster assignment
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/rosters/{id}/publish:
+    post:
+      x-maturity: implemented
+      summary: Publish a roster (validated, new immutable revision)
+      operationId: publishRoster
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Published roster
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/rosters/{id}/revise:
+    post:
+      x-maturity: implemented
+      summary: Open a new draft revision of a published roster
+      operationId: reviseRoster
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Revised roster
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/clock-events:
+    post:
+      x-maturity: implemented
+      summary: Import clock events (idempotent by source event ID)
+      operationId: importClockEvents
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV clock import per API/CLI contract section 7
+      responses:
+        '200':
+          description: Import report (inserted, duplicates, quarantined)
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/attendance:
+    get:
+      x-maturity: implemented
+      summary: Inspect interpreted attendance over intervals
       operationId: listAttendance
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
       responses:
         '200':
           description: Attendance records
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/timesheets:
+                type: object
+  /api/v1/employers/{employer_id}/attendance/intervals:
+    get:
+      x-maturity: implemented
+      summary: List intervals with lineage, linked sheets and exceptions
+      operationId: listIntervals
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: employee
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Interval details
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  /api/v1/employers/{employer_id}/attendance/corrections:
+    post:
+      x-maturity: implemented
+      summary: Append an audited attendance correction for one interval or a whole correction group
+      operationId: correctAttendance
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [interval_ids, start, end, kind, reason]
+              properties:
+                interval_ids:
+                  type: array
+                  items:
+                    type: string
+                start:
+                  type: string
+                end:
+                  type: string
+                kind:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '201':
+          description: Created correction
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/attendance/events/{event_id}/disposition:
+    post:
+      x-maturity: implemented
+      summary: Confirm a clock event as a duplicate delivery
+      operationId: dispositionDuplicateEvent
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Recorded duplicate disposition
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/attendance/attach:
+    post:
+      x-maturity: implemented
+      summary: Attach held late evidence after reissue
+      operationId: attachPendingEvidence
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Attach report
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/leave-requests:
     get:
       x-maturity: draft
-      summary: Inspect approved timesheets (Phase 2)
+      summary: List leave requests
+      operationId: listLeaveRequests
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Paginated leave requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paginated'
+    post:
+      x-maturity: draft
+      summary: Request leave
+      operationId: requestLeave
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '201':
+          description: Created leave request
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/leave-requests/{id}/approve:
+    post:
+      x-maturity: draft
+      summary: Approve or reject a leave request
+      operationId: decideLeave
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Decided leave request
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/timesheets:
+    get:
+      x-maturity: implemented
+      summary: List timesheets
       operationId: listTimesheets
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - name: period
+          in: query
+          schema:
+            type: string
+        - name: employee
+          in: query
+          schema:
+            type: string
       responses:
         '200':
           description: Timesheets
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/payroll/runs:
-    get:
-      x-maturity: draft
-      summary: List payroll runs (Phase 2)
-      operationId: listPayrollRuns
+                type: array
+                items:
+                  type: object
+  /api/v1/employers/{employer_id}/timesheets/generate:
+    post:
+      x-maturity: implemented
+      summary: Generate draft timesheets for a pay period
+      operationId: generateTimesheets
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pay_period]
+              properties:
+                pay_period:
+                  type: string
       responses:
         '200':
-          description: Payroll runs
+          description: Generation report with created sheet IDs and skips
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/payslips:
+                type: object
+  /api/v1/employers/{employer_id}/timesheets/{id}:
+    get:
+      x-maturity: implemented
+      summary: Show a timesheet with lines and source intervals
+      operationId: showTimesheet
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Timesheet detail
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/timesheets/{id}/approve:
+    post:
+      x-maturity: implemented
+      summary: Approve a submitted timesheet
+      operationId: approveTimesheet
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Approved timesheet
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/timesheets/{id}/submit:
+    post:
+      x-maturity: implemented
+      summary: Submit a draft timesheet
+      operationId: submitTimesheet
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Submitted timesheet
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/timesheets/{id}/reject:
+    post:
+      x-maturity: implemented
+      summary: Reject a submitted timesheet
+      operationId: rejectTimesheet
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Rejected timesheet
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/timesheets/{id}/reissue:
+    post:
+      x-maturity: implemented
+      summary: Open a draft correction version of a decided timesheet
+      operationId: reissueTimesheet
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201':
+          description: Correction draft
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/pay-periods:
+    get:
+      x-maturity: implemented
+      summary: List pay periods
+      operationId: listPayPeriods
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Pay periods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      x-maturity: implemented
+      summary: Create a pay period
+      operationId: createPayPeriod
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, starts_on, ends_on, pay_date, salary_deadline, ot_deadline]
+              properties:
+                code:
+                  type: string
+                starts_on:
+                  type: string
+                ends_on:
+                  type: string
+                pay_date:
+                  type: string
+                salary_deadline:
+                  type: string
+                ot_deadline:
+                  type: string
+      responses:
+        '201':
+          description: Created pay period
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/payroll-runs:
+    post:
+      x-maturity: implemented
+      summary: Open a draft payroll run (exclusion container; no calculations)
+      operationId: createPayrollRun
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period]
+              properties:
+                period:
+                  type: string
+                kind:
+                  type: string
+      responses:
+        '201':
+          description: Created payroll run
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/payroll-runs/{id}/exclusions:
+    post:
+      x-maturity: implemented
+      summary: Exclude an employee from a draft run
+      operationId: excludeFromRun
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employee, reason]
+              properties:
+                employee:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '201':
+          description: Created exclusion
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/payslips:
     get:
       x-maturity: draft
-      summary: Inspect itemised payslips (Phase 2)
+      summary: Inspect itemised payslips
       operationId: listPayslips
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
       responses:
         '200':
-          description: Payslips
+          description: Paginated payslips
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Paginated'
-  /api/v1/integrations/jobs:
+  /api/v1/employers/{employer_id}/payroll-register:
     get:
       x-maturity: draft
-      summary: Inspect sync jobs and delivery attempts (Phase 3)
-      operationId: listIntegrationJobs
+      summary: Payroll register and statutory summaries per period
+      operationId: payrollRegister
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
       responses:
         '200':
-          description: Integration jobs
+          description: Register
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/scenarios:
+                type: object
+  /api/v1/employers/{employer_id}/payroll-readiness:
     get:
-      x-maturity: draft
-      summary: List incident scenarios (Phase 3)
-      operationId: listScenarios
+      x-maturity: implemented
+      summary: Payroll readiness for a pay period (no money computed)
+      operationId: payrollReadiness
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - name: pay_period
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: run
+          in: query
+          schema:
+            type: string
       responses:
         '200':
-          description: Scenarios
+          description: Readiness report with blockers
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/incidents:
+                type: object
+  /api/v1/rule-packs:
     get:
       x-maturity: draft
-      summary: List support tickets (Phase 3)
-      operationId: listIncidents
-      responses:
-        '200':
-          description: Incident tickets
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/investigations:
-    get:
-      x-maturity: draft
-      summary: List investigation records (Phase 4)
-      operationId: listInvestigations
-      responses:
-        '200':
-          description: Investigations
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/evidence:
-    get:
-      x-maturity: draft
-      summary: Inspect evidence ledger entries (Phase 4)
-      operationId: listEvidence
-      responses:
-        '200':
-          description: Evidence entries
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/evaluations:
-    get:
-      x-maturity: draft
-      summary: Evaluation scorecards, evaluator role only (Phase 5)
-      operationId: listEvaluations
-      responses:
-        '200':
-          description: Evaluations
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Paginated'
-  /api/v1/rules:
-    get:
-      x-maturity: draft
-      summary: Implemented rule packs and verification status (Phase 2)
-      operationId: listRules
+      summary: Implemented rule packs and verification status
+      operationId: listRulePacks
+      parameters: []
       responses:
         '200':
           description: Rule packs
@@ -224,7 +1192,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Paginated'
+  /api/v1/employers/{employer_id}/rule-activations:
+    get:
+      x-maturity: implemented
+      summary: Read-only rule-pack activation status for one employer
+      operationId: listRuleActivations
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+      responses:
+        '200':
+          description: Activation records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
 components:
+  parameters:
+    EmployerId:
+      name: employer_id
+      in: path
+      required: true
+      schema:
+        type: string
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     Status:
       type: object
@@ -233,29 +1230,16 @@ components:
         status:
           type: string
           example: ok
-    ModuleStatus:
-      type: object
-      required: [module, service, version, status]
-      properties:
-        module:
-          type: string
-          example: sg-wfm-payroll
-        service:
-          type: string
-          example: shifthub
-        version:
-          type: string
-          example: 0.1.0
-        status:
-          type: string
-          example: skeleton
     Error:
       type: object
-      required: [error]
+      required: [error, message, request_id]
       properties:
         error:
           type: string
-          example: Internal server error
+          example: unsupported
+        message:
+          type: string
+          example: Unsupported employment case
         request_id:
           type: string
           format: uuid

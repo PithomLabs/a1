@@ -28,6 +28,13 @@ breaks; monthly-rated hourly rate `(12 × monthly basic) / (52 × 44)`; non-work
 rate capped at the S$2,600 level. Anything outside the verified subset returns
 `indeterminate` / `needs_review`.
 
+Stage 1 (2026-11-08): provisional MOM captures corroborate the S$2,600 /
+S$4,500 current guidance and surface the S$13.60 cap figure with an
+unstated rounding step — see
+`rules/SG-MOM-OT-001/sources/provisional/CAPTURES.md`. Provisional grade
+only; byte-grade pinning still required before any entry leaves
+`unverified`.
+
 ## 3. Gated second pack: SG-CPF (deferred)
 
 CPF needs complete official rate tables (citizenship/SPR-year/age/wage-band),

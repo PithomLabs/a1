@@ -1,0 +1,25 @@
+{
+  "rule_id": "SG-XXX-000",
+  "name": "",
+  "description": "",
+  "jurisdiction": "SG",
+  "authority": "",
+  "rigor": "L1",
+  "version": "0.1.0",
+  "status": "DISCOVERED",
+  "blocked_reason": "no sources pinned yet",
+  "effective_from": null,
+  "effective_until": null,
+  "applicability": {
+    "employee_categories": [],
+    "employment_arrangements": [],
+    "wage_basis": [],
+    "exclusions": [],
+    "unsupported": []
+  },
+  "sources": [],
+  "dependencies": [],
+  "spec_files": ["SPEC.pseudo.md"],
+  "review": {"reviewer": "", "date": "", "protocol": "MRC", "outcome": ""},
+  "implementation": {"owner": "", "version": "", "fixtures_gate": []}
+}

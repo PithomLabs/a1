@@ -13,15 +13,12 @@ primary_region = 'sin'
   dockerfile = 'Dockerfile'
 
 [processes]
-  shifthub = '/app/shifthub-api'
-  payloop = '/app/payloop-api'
-  worker = '/app/sync-worker'
+  api = '/app/workforceops serve --port 8081'
 
 [env]
   A1_ENV = 'prod'
   A1_LOG_FORMAT = 'json'
-  A1_SHIFTHUB_PORT = '8081'
-  A1_PAYLOOP_PORT = '8082'
+  A1_API_PORT = '8081'
   TZ = 'UTC'
 
 [http_service]
@@ -30,7 +27,7 @@ primary_region = 'sin'
   auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['shifthub']
+  processes = ['api']
 
   [http_service.concurrency]
     type = 'connections'

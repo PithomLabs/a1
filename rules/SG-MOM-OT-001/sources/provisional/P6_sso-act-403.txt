@@ -1,0 +1,5 @@
+SSO retrieval attempt
+url: https://sso.agc.gov.sg/Act/EmA1968
+method: web_fetch
+result: HTTP 403 Forbidden
+meaning: legislation text, Fourth Schedule, and amendment history not captured; needs Option 2 (user-provided snapshot) or unimpaired network
