@@ -491,11 +491,12 @@ func TestSHGVsApprovalBarrier(t *testing.T) {
 	emp := mkEmployer(t, pool, uniq(t, "E"))
 	period := racePeriod(t, pool, emp, uniq(t, "PP"))
 
-	// Mirrors the service SetSHG INSERT exactly.
+	// The governed SHG write path: direct INSERT is revoked, so the
+	// raw-SQL leg calls the lifecycle function, as a hand-rolled
+	// client would.
 	rawSHG := func(ee, fund string) string {
-		return `INSERT INTO shg_instruction (id, employer_id, employee_id, fund, status, amount_or_basis,
-		  source_declaration, effective_from, effective_to)
-		 VALUES (gen_random_uuid(), '` + emp + `', '` + ee + `', '` + fund + `', 'active', 'fixed', 'race', '2026-08-01', NULL)`
+		return `SELECT add_shg_instruction('` + emp + `'::uuid, '` + ee + `'::uuid, '` + fund + `',
+		  'active', 'fixed', 'race', '2026-08-01'::date, NULL, NULL, NULL, NULL, 'test-op')`
 	}
 
 	// Scenario 1: SHG write holds pre-commit; approval blocks.

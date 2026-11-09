@@ -1,0 +1,1 @@
+in retrospect, how does the industry approach and address the challenges above? is there a separate library, framework or product that address them at least partially

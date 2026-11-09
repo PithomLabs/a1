@@ -99,10 +99,13 @@ func TestPerEmployerEventNamespace(t *testing.T) {
 
 // The activation row in the database feeds the approval predicate: a
 // BLOCKED pack stops approval, IMPLEMENTABLE clears it, all-or-nothing.
+// The predicate reads through the app role; the rows themselves are
+// privileged state, set as admin (direct app writes are rejected and
+// proven so in activation_governance_test.go).
 func TestActivationFeedsApprovalPredicate(t *testing.T) {
 	emp := mkEmployer(t, key(t), "UEN-"+key(t))
 	empID := mkEmployee(t, emp, "E001")
-	exec(t, appPool,
+	exec(t, adminPool,
 		`INSERT INTO rule_pack_activation (employer_id, pack, version, status) VALUES ($1, 'SG-CPF', 'v0.1', 'BLOCKED')`, emp)
 
 	activations := loadActivations(t, emp)
@@ -113,7 +116,7 @@ func TestActivationFeedsApprovalPredicate(t *testing.T) {
 	if err := payroll.AuthorizeApproval(req); err == nil {
 		t.Fatal("expected BLOCKED pack to stop approval")
 	}
-	exec(t, appPool,
+	exec(t, adminPool,
 		`UPDATE rule_pack_activation SET status = 'IMPLEMENTABLE', activated_at = now()
 		 WHERE employer_id = $1 AND pack = 'SG-CPF'`, emp)
 	req.Activations = loadActivations(t, emp)

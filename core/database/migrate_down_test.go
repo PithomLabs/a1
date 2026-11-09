@@ -62,7 +62,7 @@ func openApp(t *testing.T, dsn string) *pgxpool.Pool {
 }
 
 // Down on a populated database fails with the guard message and
-// leaves the schema at version 11, fully intact.
+// leaves the schema at version 12, fully intact.
 func TestDownRefusesPopulatedDatabase(t *testing.T) {
 	dsn := dbutil.DSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -76,8 +76,8 @@ func TestDownRefusesPopulatedDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	if got := headVersion(t, pos.MigDSN); got != 11 {
-		t.Fatalf("head=%d want 11", got)
+	if got := headVersion(t, pos.MigDSN); got != 12 {
+		t.Fatalf("head=%d want 12", got)
 	}
 	app := openApp(t, pos.AppDSN)
 	var emp, ee, terms string
@@ -109,13 +109,21 @@ func TestDownRefusesPopulatedDatabase(t *testing.T) {
 		emp, ee, terms); err != nil {
 		t.Fatalf("comp: %v", err)
 	}
+	// An SHG row trips the 00012 guard: the SHG block is 00012's
+	// outermost dependent, so Down must refuse before touching it.
+	if _, err := app.Exec(ctx,
+		`SELECT add_shg_instruction($1::uuid, $2::uuid, 'CDAC', 'active', 'fixed', 'declared',
+		  '2026-01-01'::date, NULL, NULL, NULL, NULL, 'op')`,
+		emp, ee); err != nil {
+		t.Fatalf("shg: %v", err)
+	}
 	if err := downOnce(t, pos.MigDSN); err == nil {
 		t.Fatal("Down on a populated database succeeded, want the guard refusal")
 	} else if !strings.Contains(err.Error(), "Down refused") {
 		t.Fatalf("Down error = %v, want the guard refusal", err)
 	}
-	if got := headVersion(t, pos.MigDSN); got != 11 {
-		t.Fatalf("head=%d want 11 (schema intact)", got)
+	if got := headVersion(t, pos.MigDSN); got != 12 {
+		t.Fatalf("head=%d want 12 (schema intact)", got)
 	}
 	var links bool
 	if err := app.QueryRow(ctx,
@@ -123,10 +131,17 @@ func TestDownRefusesPopulatedDatabase(t *testing.T) {
 	).Scan(&links); err != nil || !links {
 		t.Fatalf("link table exists=%v err=%v want the schema untouched", links, err)
 	}
+	var lifecycle bool
+	if err := app.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'shg_instruction_lifecycle')`,
+	).Scan(&lifecycle); err != nil || !lifecycle {
+		t.Fatalf("SHG lifecycle trigger exists=%v err=%v want the schema untouched", lifecycle, err)
+	}
 }
 
-// Down on a freshly migrated empty database unwinds 00011 exactly:
-// 00010 shapes return, 00011 objects vanish, and Up re-applies.
+// Down on a freshly migrated empty database unwinds 00012 exactly:
+// 00011 shapes return, 00012 objects vanish, and Up re-applies.
+// Later sections extend both the checks and the re-apply below.
 func TestDownEmptyDatabaseRoundTrip(t *testing.T) {
 	dsn := dbutil.DSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -143,8 +158,8 @@ func TestDownEmptyDatabaseRoundTrip(t *testing.T) {
 	if err := downOnce(t, pos.MigDSN); err != nil {
 		t.Fatalf("Down on empty database: %v", err)
 	}
-	if got := headVersion(t, pos.MigDSN); got != 10 {
-		t.Fatalf("head=%d want 10 after Down", got)
+	if got := headVersion(t, pos.MigDSN); got != 11 {
+		t.Fatalf("head=%d want 11 after Down", got)
 	}
 	app := openApp(t, pos.AppDSN)
 	checks := []struct {
@@ -152,21 +167,38 @@ func TestDownEmptyDatabaseRoundTrip(t *testing.T) {
 		sql  string
 		want bool
 	}{
-		{"link table gone", `SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='attendance_correction_group_predecessor')`, false},
-		{"single-pred column back", `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='attendance_correction_group' AND column_name='predecessor_interval_id')`, true},
-		{"per-terms exclusion back", `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='compensation_line_no_overlap')`, true},
-		{"add_compensation gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='add_compensation')`, false},
-		{"correct_compensation gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='correct_compensation')`, false},
-		{"comp INSERT granted", `SELECT has_table_privilege('app', 'public.compensation_line', 'INSERT')`, true},
-		{"comp employee_id gone", `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='compensation_line' AND column_name='employee_id')`, false},
-		{"amount type restored", `SELECT format_type(atttypid, atttypmod) = 'numeric(12,2)' FROM pg_attribute WHERE attrelid='public.compensation_line'::regclass AND attname='amount_monthly'`, true},
-		{"basic type restored", `SELECT format_type(atttypid, atttypmod) = 'numeric(12,2)' FROM pg_attribute WHERE attrelid='public.employment_terms'::regclass AND attname='monthly_basic'`, true},
-		{"pay_basis_seq gone", `SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname='pay_basis_seq')`, false},
-		{"lock helper gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='acquire_payroll_input_lock')`, false},
-		{"timesheet basis gone", `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='timesheet' AND column_name='basis_seq')`, false},
-		{"legacy EXECUTE restored", `SELECT has_function_privilege('app', 'public.forbid_if_leave_decided()', 'EXECUTE')`, true},
-		{"disposition trigger restored", `SELECT pg_get_functiondef(oid) NOT LIKE '%already canonical%' FROM pg_proc WHERE proname='check_clock_event_disposition'`, true},
-		{"close body restored", `SELECT pg_get_functiondef(oid) NOT LIKE '%outlive%' FROM pg_proc WHERE proname='close_employment_terms'`, true},
+		{"per-fund exclusion back", `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='shg_instruction_no_overlap')`, true},
+		{"old status check back", `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='shg_instruction_status_check')`, true},
+		{"add_shg gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='add_shg_instruction')`, false},
+		{"verify_shg gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='verify_shg_instruction')`, false},
+		{"correct_shg gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='correct_shg_instruction')`, false},
+		{"lifecycle trigger gone", `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='shg_instruction_lifecycle')`, false},
+		{"basis trigger gone", `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='shg_instruction_basis_seq')`, false},
+		{"normalize trigger gone", `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='shg_instruction_created_at_normalize')`, false},
+		{"shg INSERT granted", `SELECT has_table_privilege('app', 'public.shg_instruction', 'INSERT')`, true},
+		{"supersedes column gone", `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='shg_instruction' AND column_name='supersedes_id')`, false},
+		{"shg basis gone", `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='shg_instruction' AND column_name='basis_seq')`, false},
+		{"status check gone", `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='shg_status_values')`, false},
+		{"verified check gone", `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='shg_verified_consistency')`, false},
+		// RULES (P5) reversal checks.
+		{"activate gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='activate_rule_pack')`, false},
+		{"ensure gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='ensure_pack_blocked')`, false},
+		{"history gone", `SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='rule_pack_activation_history')`, false},
+		{"registry gone", `SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='rule_pack')`, false},
+		{"activation INSERT granted", `SELECT has_table_privilege('app', 'public.rule_pack_activation', 'INSERT')`, true},
+		{"param INSERT granted", `SELECT has_table_privilege('app', 'public.sdl_params', 'INSERT')`, true},
+		// SNAPSHOT (P2) reversal checks.
+		{"invalidate gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='invalidate_payroll_snapshot')`, false},
+		{"snapshot tables gone", `SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename IN ('payroll_snapshot','payroll_snapshot_employee','payroll_snapshot_pack'))`, false},
+		{"population lock gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='acquire_payroll_population_lock')`, false},
+		{"pack lock gone", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='acquire_rule_pack_lock')`, false},
+		{"population triggers gone", `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname IN ('employee_population_barrier','employment_terms_population_barrier'))`, false},
+		{"transition body restored", `SELECT pg_get_functiondef(oid) NOT LIKE '%acquire_payroll_population_lock%' FROM pg_proc WHERE proname='transition_employee_status'`, true},
+		{"transition keeps employee lock", `SELECT pg_get_functiondef(oid) LIKE '%acquire_payroll_input_lock%' FROM pg_proc WHERE proname='transition_employee_status'`, true},
+		{"close body restored", `SELECT pg_get_functiondef(oid) NOT LIKE '%acquire_payroll_population_lock%' FROM pg_proc WHERE proname='close_employment_terms'`, true},
+		// 00011 objects below are untouched by the 00012 unwind.
+		{"compensation functions stay", `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname='add_compensation')`, true},
+		{"pay_basis_seq stays", `SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname='pay_basis_seq')`, true},
 	}
 	for _, c := range checks {
 		var got bool
@@ -183,8 +215,8 @@ func TestDownEmptyDatabaseRoundTrip(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if len(applied) != 1 || applied[0].Version != 11 {
-			return fmt.Errorf("re-apply applied %+v, want [11]", applied)
+		if len(applied) != 1 || applied[0].Version != 12 {
+			return fmt.Errorf("re-apply applied %+v, want [12]", applied)
 		}
 		return nil
 	}); err != nil {

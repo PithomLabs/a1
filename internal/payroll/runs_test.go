@@ -7,7 +7,7 @@ import (
 func TestCreateRunAndExclude(t *testing.T) {
 	pool := testPool(t)
 	emp, period := setup(t, pool)
-	r, err := CreateRun(ctx(t), pool, emp, period, "", "test-op")
+	r, err := CreateRun(ctx(t), pool, emp, period, "", "", "test-op")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -31,25 +31,32 @@ func TestCreateRunAndExclude(t *testing.T) {
 }
 
 func TestExclusionDecidedRunRejected(t *testing.T) {
-	pool := testPool(t)
-	emp, period := setup(t, pool)
-	r, err := CreateRun(ctx(t), pool, emp, period, "correction", "test-op")
-	if err != nil {
-		t.Fatalf("create: %v", err)
+	pool, admin := testPoolAndAdmin(t)
+	emp, _, run := snapSetup(t, pool)
+	period := mustPeriod(t, pool, emp)
+	eID, _ := mkSnapEmployee(t, pool, emp, period)
+	implementPacks(t, admin, emp)
+	if v, err := ValidateRun(ctx(t), pool, emp, run, 0, "test-op"); err != nil || !v.Valid {
+		t.Fatalf("validate: v=%+v err=%v", v, err)
 	}
-	if _, err := pool.Exec(ctx(t),
-		`UPDATE payroll_run SET status = 'validated' WHERE id = $1`, r.ID); err != nil {
-		t.Fatalf("decide: %v", err)
-	}
-	if _, err := AddExclusion(ctx(t), pool, emp, r.ID, "E001", "too late", "test-op"); err == nil {
+	if _, err := AddExclusion(ctx(t), pool, emp, run, eID, "too late", "test-op"); err == nil {
 		t.Fatal("expected rejection for exclusion on a decided run")
+	}
+	// Draft runs still take exclusions, including a linked
+	// correction of the decided run.
+	c, err := CreateRun(ctx(t), pool, emp, period, "correction", run, "test-op")
+	if err != nil {
+		t.Fatalf("correction: %v", err)
+	}
+	if _, err := AddExclusion(ctx(t), pool, emp, c.ID, eID, "second look", "test-op"); err != nil {
+		t.Fatalf("draft correction exclusion: %v", err)
 	}
 }
 
 func TestExclusionValidation(t *testing.T) {
 	pool := testPool(t)
 	emp, period := setup(t, pool)
-	r, err := CreateRun(ctx(t), pool, emp, period, "", "test-op")
+	r, err := CreateRun(ctx(t), pool, emp, period, "", "", "test-op")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -62,10 +69,10 @@ func TestExclusionValidation(t *testing.T) {
 	if _, err := AddExclusion(ctx(t), pool, emp, "00000000-0000-0000-0000-000000000000", "E001", "reason", "test-op"); err == nil {
 		t.Fatal("expected not_found for unknown run")
 	}
-	if _, err := CreateRun(ctx(t), pool, emp, "NO-PERIOD", "", "test-op"); err == nil {
+	if _, err := CreateRun(ctx(t), pool, emp, "NO-PERIOD", "", "", "test-op"); err == nil {
 		t.Fatal("expected not_found for unknown period")
 	}
-	if _, err := CreateRun(ctx(t), pool, emp, period, "bonus", "test-op"); err == nil {
+	if _, err := CreateRun(ctx(t), pool, emp, period, "bonus", "", "test-op"); err == nil {
 		t.Fatal("expected validation error for bad kind")
 	}
 }

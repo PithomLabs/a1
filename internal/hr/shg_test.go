@@ -71,7 +71,7 @@ func TestSHGValidation(t *testing.T) {
 		SourceDeclaration: "declared", EffectiveFrom: "2026-08-01"}
 	for name, mutate := range map[string]func(*SHGInput){
 		"bad fund":   func(i *SHGInput) { i.Fund = "NOPE" },
-		"bad status": func(i *SHGInput) { i.Status = "pending" },
+		"bad status": func(i *SHGInput) { i.Status = "bogus" },
 		"no source":  func(i *SHGInput) { i.SourceDeclaration = "  " },
 		"bad from":   func(i *SHGInput) { i.EffectiveFrom = "08/01/2026" },
 		"to before":  func(i *SHGInput) { to := "2026-07-01"; i.EffectiveTo = &to },

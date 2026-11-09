@@ -85,9 +85,11 @@ func setup(t *testing.T, pool *pgxpool.Pool) (emp, period string) {
 		}
 	}
 	mkSHG := func(empID string) {
-		_, err := pool.Exec(ctx(t),
-			`INSERT INTO shg_instruction (employer_id, employee_id, fund, status, amount_or_basis, source_declaration, effective_from)
-			 VALUES ($1, $2, 'CDAC', 'active', 'fixed', 'declared', '2026-01-01')`, emp, empID)
+		amt := "fixed"
+		_, err := hr.SetSHG(ctx(t), pool, emp, empID, hr.SHGInput{
+			Fund: "CDAC", Status: "active", AmountOrBasis: &amt,
+			SourceDeclaration: "declared", EffectiveFrom: "2026-01-01",
+		}, "test-op")
 		if err != nil {
 			t.Fatalf("shg: %v", err)
 		}
@@ -130,11 +132,10 @@ func setup(t *testing.T, pool *pgxpool.Pool) (emp, period string) {
 	mkSheet(complete, "approved", 8)
 	// Partial employee: approved sheet with lines, but no terms or SHG.
 	mkSheet(partial, "approved", 8)
-	if _, err := pool.Exec(ctx(t),
-		`INSERT INTO rule_pack_activation (employer_id, pack, version, status) VALUES
-		 ($1, 'SG-CPF-2026', 'v0', 'BLOCKED'), ($1, 'SG-SDL', 'v0', 'BLOCKED'),
-		 ($1, 'SG-SHG', 'v0', 'BLOCKED'), ($1, 'SG-MOM-KET', 'v0', 'BLOCKED')`, emp); err != nil {
-		t.Fatalf("activations: %v", err)
+	for _, p := range []string{"SG-CPF-2026", "SG-SDL", "SG-SHG", "SG-MOM-KET"} {
+		if _, err := pool.Exec(ctx(t), `SELECT ensure_pack_blocked($1::uuid, $2)`, emp, p); err != nil {
+			t.Fatalf("activations: %v", err)
+		}
 	}
 	return emp, period
 }
@@ -339,7 +340,7 @@ func TestAssessEmptyPopulation(t *testing.T) {
 }
 
 func TestAssessReady(t *testing.T) {
-	pool := testPool(t)
+	pool, admin := testPoolAndAdmin(t)
 	emp, period := setup(t, pool)
 	// Second employee becomes complete: terms and SHG are recorded,
 	// then the setup-approved sheet is reissued so the effective
@@ -361,9 +362,11 @@ func TestAssessReady(t *testing.T) {
 		emp, e2); err != nil {
 		t.Fatalf("terms: %v", err)
 	}
-	if _, err := pool.Exec(ctx(t),
-		`INSERT INTO shg_instruction (employer_id, employee_id, fund, status, amount_or_basis, source_declaration, effective_from)
-		 VALUES ($1, $2, 'CDAC', 'active', 'fixed', 'declared', '2026-01-01')`, emp, e2); err != nil {
+	amt := "fixed"
+	if _, err := hr.SetSHG(ctx(t), pool, emp, e2, hr.SHGInput{
+		Fund: "CDAC", Status: "active", AmountOrBasis: &amt,
+		SourceDeclaration: "declared", EffectiveFrom: "2026-01-01",
+	}, "test-op"); err != nil {
 		t.Fatalf("shg: %v", err)
 	}
 	var v1 string
@@ -387,7 +390,10 @@ func TestAssessReady(t *testing.T) {
 	if _, err := timesheet.Approve(ctx(t), pool, emp, v2.ID, "test-op"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if _, err := pool.Exec(ctx(t),
+	// The ready-state precondition (packs IMPLEMENTABLE) is privileged
+	// state now: the fixture sets it as admin, exactly as the
+	// activation function would, without testing activation itself.
+	if _, err := admin.Exec(ctx(t),
 		`UPDATE rule_pack_activation SET status = 'IMPLEMENTABLE' WHERE employer_id = $1`, emp); err != nil {
 		t.Fatalf("activate: %v", err)
 	}

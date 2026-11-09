@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/PithomLabs/a1/internal/hr"
 	"github.com/PithomLabs/a1/internal/payroll"
 	"github.com/PithomLabs/a1/internal/timesheet"
 	"github.com/PithomLabs/a1/internal/wfm"
@@ -62,12 +63,16 @@ func readyBreakChain(t *testing.T, pool *pgxpool.Pool, tag string, extraDates ..
 	}
 	// Terms predate any approval the test performs by fixture order
 	// (C8 normalizes created_at, so insertion order is the clock).
-	if _, err := pool.Exec(ctx(t),
-		`INSERT INTO shg_instruction (employer_id, employee_id, fund, status, amount_or_basis, source_declaration, effective_from)
-		 VALUES ($1, $2, 'CDAC', 'active', 'fixed', 'declared', '2026-01-01')`, emp, empID); err != nil {
+	amt := "fixed"
+	if _, err := hr.SetSHG(ctx(t), pool, emp, empID, hr.SHGInput{
+		Fund: "CDAC", Status: "active", AmountOrBasis: &amt,
+		SourceDeclaration: "declared", EffectiveFrom: "2026-01-01",
+	}, "test-op"); err != nil {
 		t.Fatalf("shg: %v", err)
 	}
-	if _, err := pool.Exec(ctx(t),
+	// IMPLEMENTABLE packs are privileged state: the fixture sets them
+	// as admin without testing activation itself.
+	if _, err := testAdmin(t).Exec(ctx(t),
 		`INSERT INTO rule_pack_activation (employer_id, pack, version, status) VALUES
 		 ($1, 'SG-CPF-2026', 'v0', 'IMPLEMENTABLE'), ($1, 'SG-SDL', 'v0', 'IMPLEMENTABLE'),
 		 ($1, 'SG-SHG', 'v0', 'IMPLEMENTABLE'), ($1, 'SG-MOM-KET', 'v0', 'IMPLEMENTABLE')`, emp); err != nil {

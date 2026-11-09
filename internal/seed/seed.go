@@ -179,11 +179,12 @@ func people(ctx context.Context, pool *pgxpool.Pool, employerID string) error {
 		}, "seed"); err != nil {
 			return err
 		}
-		if _, err := pool.Exec(ctx,
-			`INSERT INTO shg_instruction (employer_id, employee_id, fund, status, amount_or_basis, source_declaration, effective_from)
-			 VALUES ($1, $2, 'CDAC', 'active', 'fixed', 'synthetic demo declaration', '2026-01-01')`,
-			employerID, e.ID); err != nil {
-			return apperr.FromDB(err, "seed SHG instruction")
+		amt := "fixed"
+		if _, err := hr.SetSHG(ctx, pool, employerID, e.ID, hr.SHGInput{
+			Fund: "CDAC", Status: "active", AmountOrBasis: &amt,
+			SourceDeclaration: "synthetic demo declaration", EffectiveFrom: "2026-01-01",
+		}, Operator); err != nil {
+			return err
 		}
 		if err := wfm.AssignSkills(ctx, pool, employerID, no, "2026-01-01", []wfm.SkillGrant{
 			{Skill: "EN-SUPPORT", Level: 3},
@@ -340,10 +341,7 @@ func period(ctx context.Context, pool *pgxpool.Pool, employerID string) error {
 // block explicitly, never assume a pack.
 func activations(ctx context.Context, pool *pgxpool.Pool, employerID string) error {
 	for _, p := range []string{"SG-MOM-OT", "SG-MOM-SHIFT", "SG-CPF-2026", "SG-SDL", "SG-SHG", "SG-MOM-LEAVE", "SG-MOM-KET", "SG-MOM-PH", "SG-MOM-PAYDEAD"} {
-		if _, err := pool.Exec(ctx,
-			`INSERT INTO rule_pack_activation (employer_id, pack, version, status) VALUES ($1, $2, 'v0', 'BLOCKED')
-			 ON CONFLICT (employer_id, pack) DO UPDATE SET status = 'BLOCKED', version = 'v0'`,
-			employerID, p); err != nil {
+		if _, err := pool.Exec(ctx, `SELECT ensure_pack_blocked($1::uuid, $2)`, employerID, p); err != nil {
 			return apperr.FromDB(err, "seed activations")
 		}
 	}

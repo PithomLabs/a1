@@ -122,6 +122,46 @@ func employeeCmd() *cobra.Command {
 	}
 	shgCmd.Flags().String("file", "", "JSON input file")
 	cmd.AddCommand(shgCmd)
+	shgVerify := &cobra.Command{
+		Use:   "shg-verify <instruction-id>",
+		Short: "Verify a pending SHG instruction from a JSON file {source_declaration, effective_from, effective_to?, verified_at, verified_by, verification_basis}",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := resolveCLI(cmd, true, true)
+			if err != nil {
+				return out(cmd, nil, nil, err)
+			}
+			defer c.close()
+			var in hr.SHGVerifyInput
+			if err := readJSONFile(cmd, &in); err != nil {
+				return out(cmd, c, nil, err)
+			}
+			s, err := hr.VerifySHG(c.ctx, c.pool, c.employer.ID, args[0], in, c.operator)
+			return out(cmd, c, s, err)
+		},
+	}
+	shgVerify.Flags().String("file", "", "JSON input file")
+	cmd.AddCommand(shgVerify)
+	shgCorrect := &cobra.Command{
+		Use:   "shg-correct <instruction-id>",
+		Short: "Mint a governed SHG successor from a JSON file {status, amount_or_basis?, source_declaration, effective_from, effective_to?, verified_at?, verified_by?, verification_basis?}",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := resolveCLI(cmd, true, true)
+			if err != nil {
+				return out(cmd, nil, nil, err)
+			}
+			defer c.close()
+			var in hr.SHGCorrectInput
+			if err := readJSONFile(cmd, &in); err != nil {
+				return out(cmd, c, nil, err)
+			}
+			s, err := hr.CorrectSHG(c.ctx, c.pool, c.employer.ID, args[0], in, c.operator)
+			return out(cmd, c, s, err)
+		},
+	}
+	shgCorrect.Flags().String("file", "", "JSON input file")
+	cmd.AddCommand(shgCorrect)
 	termsCmd := &cobra.Command{Use: "terms", Short: "Employment terms"}
 	termsSet := &cobra.Command{
 		Use:   "set <employee>",

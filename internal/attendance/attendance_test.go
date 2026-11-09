@@ -38,6 +38,26 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// testAdmin opens the same test database as the schema owner, for
+// fixtures that must set privileged state (e.g. IMPLEMENTABLE packs).
+// Product assertions always read back through the app pool.
+func testAdmin(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	migrate := func(ctx context.Context, migDSN string) error {
+		_, err := coredatabase.MigrateUp(ctx, migDSN, coremigrations.FS)
+		return err
+	}
+	setup := dbutil.Setup(t, migrate)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	admin, err := coredatabase.Open(ctx, setup.AdminDSN)
+	if err != nil {
+		t.Fatalf("open admin: %v", err)
+	}
+	t.Cleanup(admin.Close)
+	return admin
+}
+
 func ctx(t *testing.T) context.Context {
 	t.Helper()
 	c, cancel := context.WithTimeout(context.Background(), 30*time.Second)

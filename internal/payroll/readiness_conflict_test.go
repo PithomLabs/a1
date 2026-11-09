@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/PithomLabs/a1/internal/hr"
 	"github.com/PithomLabs/a1/internal/timesheet"
 )
 
@@ -36,9 +37,11 @@ func mkConflictEmployeeBase(t *testing.T, pool *pgxpool.Pool, emp string) string
 		emp, e); err != nil {
 		t.Fatalf("terms: %v", err)
 	}
-	if _, err := pool.Exec(ctx(t),
-		`INSERT INTO shg_instruction (employer_id, employee_id, fund, status, amount_or_basis, source_declaration, effective_from)
-		 VALUES ($1, $2, 'CDAC', 'active', 'fixed', 'declared', '2026-01-01')`, emp, e); err != nil {
+	amt := "fixed"
+	if _, err := hr.SetSHG(ctx(t), pool, emp, e, hr.SHGInput{
+		Fund: "CDAC", Status: "active", AmountOrBasis: &amt,
+		SourceDeclaration: "declared", EffectiveFrom: "2026-01-01",
+	}, "test-op"); err != nil {
 		t.Fatalf("shg: %v", err)
 	}
 	return e

@@ -79,6 +79,11 @@ func CreateEmployee(ctx context.Context, pool *pgxpool.Pool, employerID string, 
 		return nil, apperr.FromDB(err, "begin create employee")
 	}
 	defer tx.Rollback(ctx)
+	// Population first: a new employee must not enter the expected
+	// set mid-capture. The INSERT trigger re-locks for direct SQL.
+	if err := coredatabase.LockPayrollPopulation(ctx, tx, employerID); err != nil {
+		return nil, err
+	}
 	var e Employee
 	err = tx.QueryRow(ctx,
 		`INSERT INTO employee (employer_id, employee_no, legal_name, address, gender, date_of_birth, citizenship, status, status_effective_date)
@@ -180,8 +185,12 @@ func SetStatus(ctx context.Context, pool *pgxpool.Pool, employerID, employeeID, 
 		return nil, apperr.FromDB(err, "begin status change")
 	}
 	defer tx.Rollback(ctx)
-	// Amendment A: population changes join the payroll-input barrier
-	// (the controlled function re-locks for direct-SQL callers).
+	// Global order population → employee: status changes move
+	// population membership. The controlled function re-locks the
+	// population key for direct-SQL callers.
+	if err := coredatabase.LockPayrollPopulation(ctx, tx, employerID); err != nil {
+		return nil, err
+	}
 	if err := coredatabase.LockPayrollInput(ctx, tx, employerID, employeeID); err != nil {
 		return nil, err
 	}
@@ -363,8 +372,12 @@ func SetTerms(ctx context.Context, pool *pgxpool.Pool, employerID, employeeID st
 		return nil, apperr.FromDB(err, "begin set terms")
 	}
 	defer tx.Rollback(ctx)
-	// Amendment A: terms changes join the payroll-input barrier, so
-	// the approved-period check below cannot race an approval.
+	// Global order population → employee: terms changes move
+	// population membership, and the approved-period check below must
+	// not race an approval.
+	if err := coredatabase.LockPayrollPopulation(ctx, tx, employerID); err != nil {
+		return nil, err
+	}
 	if err := coredatabase.LockPayrollInput(ctx, tx, employerID, employeeID); err != nil {
 		return nil, err
 	}

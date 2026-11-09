@@ -37,9 +37,11 @@ func mkCompFixture(t *testing.T, pool *pgxpool.Pool, emp, period string) (empID,
 	}
 	// No backdate: terms keep their honest now() stamp; approvals
 	// below sort after them in real time (C8 normalizes created_at).
-	if _, err := pool.Exec(ctx(t),
-		`INSERT INTO shg_instruction (employer_id, employee_id, fund, status, amount_or_basis, source_declaration, effective_from)
-		 VALUES ($1, $2, 'CDAC', 'active', 'fixed', 'declared', '2026-01-01')`, emp, e.ID); err != nil {
+	amt := "fixed"
+	if _, err := hr.SetSHG(ctx(t), pool, emp, e.ID, hr.SHGInput{
+		Fund: "CDAC", Status: "active", AmountOrBasis: &amt,
+		SourceDeclaration: "declared", EffectiveFrom: "2026-01-01",
+	}, "test-op"); err != nil {
 		t.Fatalf("shg: %v", err)
 	}
 	if err := pool.QueryRow(ctx(t),

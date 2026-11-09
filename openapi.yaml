@@ -349,6 +349,90 @@ paths:
             application/json:
               schema:
                 type: object
+  /api/v1/employers/{employer_id}/employees/{id}/shg/{instruction_id}/verify:
+    post:
+      x-maturity: implemented
+      summary: Verify a pending SHG instruction with evidence
+      operationId: verifyShg
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+        - name: instruction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_declaration, effective_from, verified_at, verified_by, verification_basis]
+              properties:
+                source_declaration:
+                  type: string
+                effective_from:
+                  type: string
+                effective_to:
+                  type: string
+                verified_at:
+                  type: string
+                verified_by:
+                  type: string
+                verification_basis:
+                  type: string
+      responses:
+        '200':
+          description: Verified SHG instruction
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/employees/{id}/shg/{instruction_id}/correct:
+    post:
+      x-maturity: implemented
+      summary: Mint a governed SHG successor instruction
+      operationId: correctShg
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+        - name: instruction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, source_declaration, effective_from]
+              properties:
+                status:
+                  type: string
+                amount_or_basis:
+                  type: string
+                source_declaration:
+                  type: string
+                effective_from:
+                  type: string
+                effective_to:
+                  type: string
+                verified_at:
+                  type: string
+                verified_by:
+                  type: string
+                verification_basis:
+                  type: string
+      responses:
+        '200':
+          description: Successor SHG instruction
+          content:
+            application/json:
+              schema:
+                type: object
   /api/v1/employers/{employer_id}/employees/{id}/ket:
     get:
       x-maturity: draft
@@ -1094,9 +1178,67 @@ paths:
                   type: string
                 kind:
                   type: string
+                corrects:
+                  type: string
+                  description: Original run ID (required for correction runs)
       responses:
         '201':
           description: Created payroll run
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/payroll-runs/{id}:
+    get:
+      x-maturity: implemented
+      summary: Inspect a payroll run (status, exclusions, valid snapshot tip)
+      operationId: inspectPayrollRun
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Run detail
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/payroll-runs/{id}/validate:
+    post:
+      x-maturity: implemented
+      summary: Validate a draft run against an offered snapshot version (no calculations)
+      operationId: validatePayrollRun
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                offered_version:
+                  type: integer
+                  description: Snapshot version the operator inspected (0 when none stands)
+      responses:
+        '200':
+          description: Validation verdict with blockers when refused
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/employers/{employer_id}/snapshots/{id}:
+    get:
+      x-maturity: implemented
+      summary: Inspect an input snapshot (pins, employees, content hash)
+      operationId: inspectSnapshot
+      parameters:
+        - $ref: '#/components/parameters/EmployerId'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Snapshot detail
           content:
             application/json:
               schema:

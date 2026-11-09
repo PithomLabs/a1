@@ -27,7 +27,7 @@ func rootCmd() *cobra.Command {
 	root.PersistentFlags().String("format", "json", "output format: json or text")
 	root.PersistentFlags().String("employer", "", "employer code or UUID (default when exactly one exists)")
 	root.PersistentFlags().String("operator", "", "operator attribution (default $USER)")
-	root.AddCommand(versionCmd(), migrateCmd())
+	root.AddCommand(versionCmd(), migrateCmd(), adminCmd())
 	root.AddCommand(seedCmd(), serveCmd())
 	root.AddCommand(employerCmd(), employeeCmd())
 	root.AddCommand(clientCmd(), programmeCmd(), teamCmd(), skillCmd(), shiftTemplateCmd())

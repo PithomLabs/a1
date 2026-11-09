@@ -40,8 +40,8 @@ func TestFreshInstallChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if len(applied) != 11 {
-		t.Fatalf("applied %d migrations, want 00001-00011", len(applied))
+	if len(applied) != 12 {
+		t.Fatalf("applied %d migrations, want 00001-00012", len(applied))
 	}
 
 	c, err := pgx.Connect(ctx(t), dbutil.WithDB(adminDSN, db))

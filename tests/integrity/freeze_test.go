@@ -2,6 +2,10 @@ package integrity
 
 import (
 	"testing"
+
+	"github.com/PithomLabs/a1/internal/hr"
+	"github.com/PithomLabs/a1/internal/payroll"
+	"github.com/PithomLabs/a1/internal/timesheet"
 )
 
 // G2: temporal freezing. Drafts stay mutable; decided, published and
@@ -81,17 +85,19 @@ func TestFreezeReparenting(t *testing.T) {
 		`UPDATE roster_assignment SET revision_id = $1 WHERE id = $2`, revP, asg)
 	expectSQLError(t, err, "P0001", "frozen", "assignment re-parented into published revision")
 
-	// Payroll line moved from a draft run into an approved run.
+	// Payroll lines have no frozen run parent in Milestone 2: the
+	// approved flip itself is rejected, and draft runs stay
+	// mutually mutable.
 	runA := mkRun(t, emp, period)
 	runB := mkRun(t, emp, period)
 	line := queryID(t, appPool,
 		`INSERT INTO payroll_line (employer_id, run_id, employee_id, component, pay_code, amount, cpf_treatment, work_period, payable_date, contribution_period, source_refs)
 		 VALUES ($1, $2, $3, 'basic', 'OT15', 100, 'OW', '2026-08', '2026-09-07', '2026-08', $4::jsonb) RETURNING id`,
 		emp, runB, empA, lineRefs(t))
-	exec(t, appPool, `UPDATE payroll_run SET status = 'approved', approved_by = 'test' WHERE id = $1`, runA)
 	_, err = appPool.Exec(ctx(t),
-		`UPDATE payroll_line SET run_id = $1 WHERE id = $2`, runA, line)
-	expectSQLError(t, err, "P0001", "frozen", "payroll line re-parented into approved run")
+		`UPDATE payroll_run SET status = 'approved', approved_by = 'test' WHERE id = $1`, runA)
+	expectSQLError(t, err, "P0001", "only draft -> validated", "payroll run approved by direct SQL")
+	exec(t, appPool, `UPDATE payroll_line SET run_id = $1 WHERE id = $2`, runA, line)
 }
 
 // Timesheet, lines and allocations are editable in draft and frozen once
@@ -161,12 +167,15 @@ func TestRosterDraftMatrix(t *testing.T) {
 	expectSQLError(t, err, "P0001", "frozen", "published: insert assignment")
 }
 
-// Runs and lines freeze on approval; exclusions exist only for drafts.
+// Runs reach validated only through validation; exclusions exist
+// only for drafts. Approved and finalized are unreachable in
+// Milestone 2: no calculation or approval artifacts exist.
 func TestRunFreezeMatrix(t *testing.T) {
 	a := mkEmployer(t, key(t), "UEN-"+key(t))
 	emp := mkEmployee(t, a, "E001")
 	period := mkPeriod(t, a, "PP")
 	mkPayCode(t, "BASIC")
+	mkPayCode(t, "REG")
 	run := mkRun(t, a, period)
 
 	line := queryID(t, appPool,
@@ -185,9 +194,43 @@ func TestRunFreezeMatrix(t *testing.T) {
 		`INSERT INTO payroll_run_exclusion (employer_id, payroll_run_id, employee_id, reason, actor)
 		 VALUES ($1, $2, $3, 'early', 'op') RETURNING id`,
 		a, run, emp)
-	exec(t, appPool, `UPDATE payroll_run SET status = 'validated' WHERE id = $1`, run)
-	requireStatus(t, "payroll_run", run, "validated")
+	// A status flip without captured inputs is refused: the run
+	// reaches validated only through validation.
 	_, err := appPool.Exec(ctx(t),
+		`UPDATE payroll_run SET status = 'validated' WHERE id = $1`, run)
+	expectSQLError(t, err, "P0001", "exactly one valid snapshot", "draft: validate without snapshot")
+	mkTerms(t, a, emp, "2026-01-01")
+	amt := "fixed"
+	if _, err := hr.SetSHG(ctx(t), appPool, a, "E001", hr.SHGInput{
+		Fund: "CDAC", Status: "active", AmountOrBasis: &amt,
+		SourceDeclaration: "freeze matrix", EffectiveFrom: "2026-01-01",
+	}, "test"); err != nil {
+		t.Fatalf("shg: %v", err)
+	}
+	sheet := queryID(t, appPool,
+		`INSERT INTO timesheet (employer_id, employee_id, pay_period_id, status)
+		 VALUES ($1, $2, $3, 'draft') RETURNING id`, a, emp, period)
+	exec(t, appPool,
+		`INSERT INTO timesheet_line (id, employer_id, timesheet_id, pay_code, hours, hours_us, pay_period_id)
+		 VALUES (gen_random_uuid(), $1, $2, 'REG', 8, 28800000000, $3)`, a, sheet, period)
+	if _, err := timesheet.Submit(ctx(t), appPool, a, sheet, "test"); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if _, err := timesheet.Approve(ctx(t), appPool, a, sheet, "test"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	for _, p := range []string{"SG-CPF-2026", "SG-SDL", "SG-SHG", "SG-MOM-KET"} {
+		exec(t, adminPool,
+			`INSERT INTO rule_pack_activation (employer_id, pack, version, status, activated_at)
+			 VALUES ($1, $2, 'v0', 'IMPLEMENTABLE', now())
+			 ON CONFLICT (employer_id, pack) DO UPDATE SET status = 'IMPLEMENTABLE'`, a, p)
+	}
+	v, err := payroll.ValidateRun(ctx(t), appPool, a, run, 0, "test")
+	if err != nil || !v.Valid {
+		t.Fatalf("validate: v=%+v err=%v", v, err)
+	}
+	requireStatus(t, "payroll_run", run, "validated")
+	_, err = appPool.Exec(ctx(t),
 		`INSERT INTO payroll_run_exclusion (employer_id, payroll_run_id, employee_id, reason, actor)
 		 VALUES ($1, $2, $3, 'late', 'op')`, a, run, emp)
 	expectSQLError(t, err, "P0001", "draft", "validated: insert exclusion")
@@ -195,25 +238,32 @@ func TestRunFreezeMatrix(t *testing.T) {
 	expectSQLError(t, err, "P0001", "draft", "validated: update exclusion")
 	_, err = appPool.Exec(ctx(t), `DELETE FROM payroll_run_exclusion WHERE id = $1`, excl2)
 	expectSQLError(t, err, "P0001", "draft", "validated: delete exclusion")
-	// Lines stay mutable while validation can still fail the run.
+	// Lines stay mutable: no calculation pins them yet.
 	exec(t, appPool, `UPDATE payroll_line SET amount = 2602 WHERE id = $1`, line)
 
-	exec(t, appPool, `UPDATE payroll_run SET status = 'approved', approved_by = 'test' WHERE id = $1`, run)
-	requireStatus(t, "payroll_run", run, "approved")
+	// Milestone 2 stops at validated: calculated, approved and
+	// finalized need artifacts that do not exist, validated never
+	// reopens, and identity freezes once a snapshot stands.
+	_, err = appPool.Exec(ctx(t),
+		`UPDATE payroll_run SET status = 'approved', approved_by = 'test' WHERE id = $1`, run)
+	expectSQLError(t, err, "P0001", "only draft -> validated", "validated: approve run")
 	_, err = appPool.Exec(ctx(t), `UPDATE payroll_run SET status = 'draft' WHERE id = $1`, run)
-	expectSQLError(t, err, "P0001", "frozen", "approved: reopen run")
+	expectSQLError(t, err, "P0001", "only draft -> validated", "validated: reopen run")
+	_, err = appPool.Exec(ctx(t), `UPDATE payroll_run SET kind = 'correction' WHERE id = $1`, run)
+	expectSQLError(t, err, "P0001", "frozen", "validated: change kind")
+	requireStatus(t, "payroll_run", run, "validated")
+	// Governed history pins the run: snapshots, lines and the
+	// surviving exclusion all reference it.
 	_, err = appPool.Exec(ctx(t), `DELETE FROM payroll_run WHERE id = $1`, run)
-	expectSQLError(t, err, "P0001", "frozen", "approved: delete run")
-	_, err = appPool.Exec(ctx(t), `UPDATE payroll_line SET amount = 1 WHERE id = $1`, line)
-	expectSQLError(t, err, "P0001", "frozen", "approved: edit line")
-	_, err = appPool.Exec(ctx(t), `DELETE FROM payroll_line WHERE id = $1`, line)
-	expectSQLError(t, err, "P0001", "frozen", "approved: delete line")
+	expectSQLError(t, err, "23503", "payroll_run", "validated: delete run")
 
-	// One approved regular run per period.
+	// A second regular run cannot validate behind the first: direct
+	// SQL has no tip, and the service refuses the already-stands
+	// run (proven in the payroll package).
 	run2 := mkRun(t, a, period)
 	_, err = appPool.Exec(ctx(t),
-		`UPDATE payroll_run SET status = 'approved', approved_by = 'test' WHERE id = $1`, run2)
-	expectSQLError(t, err, "23505", "payroll_run_one_approved_regular", "second approved regular run")
+		`UPDATE payroll_run SET status = 'validated' WHERE id = $1`, run2)
+	expectSQLError(t, err, "P0001", "exactly one valid snapshot", "second run: validate without snapshot")
 }
 
 // Decided leave requests are immutable; requested ones stay editable.

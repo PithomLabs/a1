@@ -2,6 +2,7 @@ package payroll
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/PithomLabs/a1/internal/apperr"
+	"github.com/PithomLabs/a1/internal/compbasis"
 	"github.com/PithomLabs/a1/internal/employer"
 	"github.com/PithomLabs/a1/internal/timesheet"
 )
@@ -68,6 +70,15 @@ type CompConflict struct {
 	Reason     string `json:"reason"`
 }
 
+// SHGConflict names one employee with an SHG instruction effective in
+// the period but created after their sheet was approved: a correction
+// or verification the approval does not cover. A newer approval
+// built from the current instructions clears it.
+type SHGConflict struct {
+	EmployeeNo string `json:"employee_no"`
+	Reason     string `json:"reason"`
+}
+
 // Readiness is the payroll-readiness assessment. It reports facts and a
 // verdict; it computes no money and approves nothing.
 type Readiness struct {
@@ -83,6 +94,7 @@ type Readiness struct {
 	TermConflicts       []TermConflict       `json:"term_conflicts"`
 	AttendanceConflicts []AttendanceConflict `json:"attendance_conflicts"`
 	CompConflicts       []CompConflict       `json:"comp_conflicts"`
+	SHGConflicts        []SHGConflict        `json:"shg_conflicts"`
 	Packs               []PackStatus         `json:"packs"`
 	Blocked             []BlockedDetail      `json:"blocked"`
 	MissingInfo         []MissingDetail      `json:"missing_info"`
@@ -119,7 +131,8 @@ func Assess(ctx context.Context, pool *pgxpool.Pool, employerID, periodCodeOrID 
 		Expected: []string{}, WithApproved: []string{}, Included: []string{},
 		Excluded: []ExcludedEmployee{}, TermConflicts: []TermConflict{},
 		AttendanceConflicts: []AttendanceConflict{}, CompConflicts: []CompConflict{},
-		Packs: []PackStatus{}, Blocked: []BlockedDetail{}, MissingInfo: []MissingDetail{},
+		SHGConflicts: []SHGConflict{},
+		Packs:        []PackStatus{}, Blocked: []BlockedDetail{}, MissingInfo: []MissingDetail{},
 	}
 	activations, err := loadActivations(ctx, pool, employerID, out)
 	if err != nil {
@@ -198,6 +211,23 @@ func Assess(ctx context.Context, pool *pgxpool.Pool, employerID, periodCodeOrID 
 			out.CompConflicts = append(out.CompConflicts, CompConflict{EmployeeNo: e.no, Reason: conflict})
 			continue
 		}
+		if conflict, err := checkSHGConflict(ctx, pool, employerID, e.id, period.id, sheetID); err != nil {
+			return nil, err
+		} else if conflict != "" {
+			out.SHGConflicts = append(out.SHGConflicts, SHGConflict{EmployeeNo: e.no, Reason: conflict})
+			continue
+		}
+		// P3: the compensation basis resolves through the single
+		// shared resolver; an ambiguous or invalid chain blocks
+		// with a machine-readable conflict instead of guessing.
+		if _, err := compbasis.ResolveEffectiveCompensation(ctx, pool, employerID, e.id, period.start, period.end); err != nil {
+			var bc *compbasis.BasisConflict
+			if errors.As(err, &bc) {
+				out.CompConflicts = append(out.CompConflicts, CompConflict{EmployeeNo: e.no, Reason: bc.Error()})
+				continue
+			}
+			return nil, err
+		}
 		packs, err := requiredPacks(ctx, pool, employerID, sheetID)
 		if err != nil {
 			return nil, err
@@ -231,9 +261,9 @@ func Assess(ctx context.Context, pool *pgxpool.Pool, employerID, periodCodeOrID 
 		out.Verdict = "not ready: empty population"
 	case len(out.Included) == 0:
 		out.Verdict = "not ready: no included employees with complete input"
-	case len(out.Blocked) > 0 || len(out.MissingInfo) > 0 || len(out.TermConflicts) > 0 || len(out.AttendanceConflicts) > 0 || len(out.CompConflicts) > 0:
-		out.Verdict = fmt.Sprintf("not ready: %d blocked, %d missing input, %d term conflicts, %d attendance conflicts, %d comp conflicts",
-			len(out.Blocked), len(out.MissingInfo), len(out.TermConflicts), len(out.AttendanceConflicts), len(out.CompConflicts))
+	case len(out.Blocked) > 0 || len(out.MissingInfo) > 0 || len(out.TermConflicts) > 0 || len(out.AttendanceConflicts) > 0 || len(out.CompConflicts) > 0 || len(out.SHGConflicts) > 0:
+		out.Verdict = fmt.Sprintf("not ready: %d blocked, %d missing input, %d term conflicts, %d attendance conflicts, %d comp conflicts, %d shg conflicts",
+			len(out.Blocked), len(out.MissingInfo), len(out.TermConflicts), len(out.AttendanceConflicts), len(out.CompConflicts), len(out.SHGConflicts))
 	default:
 		out.Ready = true
 		out.Verdict = "ready: all expected employees resolve all required packs"
@@ -310,11 +340,11 @@ func loadExclusions(ctx context.Context, pool *pgxpool.Pool, employerID, periodI
 
 // checkEmployee returns the missing-input reason, or "" when the
 // effective sheet carries payable lines and the employee has terms and
-// an SHG instruction covering the period.
-func checkEmployee(ctx context.Context, pool *pgxpool.Pool, employerID, employeeID, periodID, sheetID, start, end string) (string, error) {
+// a covering SHG chain tip for the period.
+func checkEmployee(ctx context.Context, q qtx, employerID, employeeID, periodID, sheetID, start, end string) (string, error) {
 	var lines int
 	var hours float64
-	err := pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT count(*), COALESCE(sum(hours), 0) FROM timesheet_line
 		 WHERE employer_id = $1 AND timesheet_id = $2`,
 		employerID, sheetID).Scan(&lines, &hours)
@@ -325,7 +355,7 @@ func checkEmployee(ctx context.Context, pool *pgxpool.Pool, employerID, employee
 		return "approved timesheet has no payable lines", nil
 	}
 	var terms bool
-	err = pool.QueryRow(ctx,
+	err = q.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM employment_terms t
 		 WHERE t.employer_id = $1 AND t.employee_id = $2
 		   AND t.effective_from <= $4::date AND (t.effective_to IS NULL OR t.effective_to >= $3::date))`,
@@ -336,31 +366,74 @@ func checkEmployee(ctx context.Context, pool *pgxpool.Pool, employerID, employee
 	if !terms {
 		return "no effective employment terms for period", nil
 	}
-	var shg bool
-	err = pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM shg_instruction s
+	return checkSHGCoverage(ctx, q, employerID, employeeID, start, end)
+}
+
+// checkSHGCoverage evaluates the employee's SHG chain tips covering the
+// period: only successorless rows count, so superseded history never
+// blocks. It returns "" when covered, else a machine-readable coded
+// blocker: a corrupt verified_none tip first, then coverage by any
+// active or fully-evidenced verified_none tip, else the pending or
+// opt-out state of the live tips.
+func checkSHGCoverage(ctx context.Context, q qtx, employerID, employeeID, start, end string) (string, error) {
+	rows, err := q.Query(ctx,
+		`SELECT s.fund, s.status,
+		  (s.verified_at IS NOT NULL AND s.verified_by IS NOT NULL AND s.verification_basis IS NOT NULL) AS tripled
+		 FROM shg_instruction s
 		 WHERE s.employer_id = $1 AND s.employee_id = $2
-		   AND s.effective_from <= $4::date AND (s.effective_to IS NULL OR s.effective_to >= $3::date))`,
-		employerID, employeeID, start, end).Scan(&shg)
+		   AND s.effective_from <= $4::date AND (s.effective_to IS NULL OR s.effective_to >= $3::date)
+		   AND NOT EXISTS (SELECT 1 FROM shg_instruction t WHERE t.supersedes_id = s.id)
+		 ORDER BY s.fund`,
+		employerID, employeeID, start, end)
 	if err != nil {
 		return "", apperr.FromDB(err, "check SHG instruction")
 	}
-	if !shg {
-		return "no SHG instruction for period", nil
+	defer rows.Close()
+	type tip struct {
+		fund, status string
+		tripled      bool
 	}
-	return "", nil
+	var tips []tip
+	for rows.Next() {
+		var tp tip
+		if err := rows.Scan(&tp.fund, &tp.status, &tp.tripled); err != nil {
+			return "", apperr.FromDB(err, "scan SHG instruction")
+		}
+		tips = append(tips, tp)
+	}
+	if err := rows.Err(); err != nil {
+		return "", apperr.FromDB(err, "check SHG instruction")
+	}
+	if len(tips) == 0 {
+		return "SHG_INSTRUCTION_MISSING: no SHG instruction for period", nil
+	}
+	for _, tp := range tips {
+		if tp.status == "verified_none" && !tp.tripled {
+			return "SHG_CORRUPT: " + tp.fund + " verified_none instruction lacks its evidence triple", nil
+		}
+	}
+	for _, tp := range tips {
+		if tp.status == "active" || tp.status == "verified_none" {
+			return "", nil
+		}
+	}
+	for _, tp := range tips {
+		if tp.status == "pending" {
+			return "SHG_PENDING: " + tp.fund + " instruction recorded but unverified", nil
+		}
+	}
+	return "SHG_OPT_OUT: " + tips[0].fund + " instruction opted out", nil
 }
 
-// checkTermConflict reports when a terms row covering the period was
-// created after the sheet was approved: the approval predates the
-// record it would pay against. Either leg proves it: a newer
-// lock-serialized basis version (exact under the barrier) or a newer
-// creation timestamp (preserves pre-migration behavior for legacy
-// rows backfilled at seq 0).
-func checkTermConflict(ctx context.Context, pool *pgxpool.Pool, employerID, employeeID, periodID, sheetID string) (string, error) {
+// checkSHGConflict mirrors checkTermConflict for SHG evidence: an
+// instruction overlapping the period but created after the effective
+// approval (a correction, a verification, or a late declaration) means
+// the approval predates the record. Either leg proves it: a newer
+// lock-serialized basis version or a newer creation timestamp.
+func checkSHGConflict(ctx context.Context, q qtx, employerID, employeeID, periodID, sheetID string) (string, error) {
 	var approvedAt *time.Time
 	var approvalSeq int64
-	err := pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT approved_at, basis_seq FROM timesheet WHERE employer_id = $1 AND id = $2`,
 		employerID, sheetID).Scan(&approvedAt, &approvalSeq)
 	if err != nil {
@@ -370,7 +443,42 @@ func checkTermConflict(ctx context.Context, pool *pgxpool.Pool, employerID, empl
 		return "approved sheet has no approval timestamp", nil
 	}
 	var clash string
-	err = pool.QueryRow(ctx,
+	err = q.QueryRow(ctx,
+		`SELECT s.fund FROM shg_instruction s JOIN pay_period p ON p.id = $3
+		 WHERE s.employer_id = $1 AND s.employee_id = $2
+		   AND s.effective_from <= p.ends_on AND (s.effective_to IS NULL OR s.effective_to >= p.starts_on)
+		   AND (s.created_at > $4 OR s.basis_seq > $5)
+		 ORDER BY s.fund LIMIT 1`,
+		employerID, employeeID, periodID, *approvedAt, approvalSeq).Scan(&clash)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", nil
+		}
+		return "", apperr.FromDB(err, "check SHG conflicts")
+	}
+	return "SHG instruction " + clash + " created after approval", nil
+}
+
+// checkTermConflict reports when a terms row covering the period was
+// created after the sheet was approved: the approval predates the
+// record it would pay against. Either leg proves it: a newer
+// lock-serialized basis version (exact under the barrier) or a newer
+// creation timestamp (preserves pre-migration behavior for legacy
+// rows backfilled at seq 0).
+func checkTermConflict(ctx context.Context, q qtx, employerID, employeeID, periodID, sheetID string) (string, error) {
+	var approvedAt *time.Time
+	var approvalSeq int64
+	err := q.QueryRow(ctx,
+		`SELECT approved_at, basis_seq FROM timesheet WHERE employer_id = $1 AND id = $2`,
+		employerID, sheetID).Scan(&approvedAt, &approvalSeq)
+	if err != nil {
+		return "", apperr.FromDB(err, "load approval time")
+	}
+	if approvedAt == nil {
+		return "approved sheet has no approval timestamp", nil
+	}
+	var clash string
+	err = q.QueryRow(ctx,
 		`SELECT t.effective_from::text FROM employment_terms t JOIN pay_period p ON p.id = $3
 		 WHERE t.employer_id = $1 AND t.employee_id = $2
 		   AND t.effective_from <= p.ends_on AND (t.effective_to IS NULL OR t.effective_to >= p.starts_on)
@@ -392,10 +500,10 @@ func checkTermConflict(ctx context.Context, pool *pgxpool.Pool, employerID, empl
 // consumed nor confirmed duplicate. Event dates attribute in the
 // employment timezone, never the vendor's. Handled evidence —
 // pre-approval rows and dispositioned duplicates — never conflicts.
-func checkAttendanceConflict(ctx context.Context, pool *pgxpool.Pool, employerID, employeeID, periodID, sheetID string) (string, error) {
+func checkAttendanceConflict(ctx context.Context, q qtx, employerID, employeeID, periodID, sheetID string) (string, error) {
 	var approvedAt *time.Time
 	var approvalSeq int64
-	err := pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT approved_at, basis_seq FROM timesheet WHERE employer_id = $1 AND id = $2`,
 		employerID, sheetID).Scan(&approvedAt, &approvalSeq)
 	if err != nil {
@@ -405,7 +513,7 @@ func checkAttendanceConflict(ctx context.Context, pool *pgxpool.Pool, employerID
 		return "approved sheet has no approval timestamp", nil
 	}
 	var clash string
-	err = pool.QueryRow(ctx,
+	err = q.QueryRow(ctx,
 		`SELECT i.local_date::text FROM attendance_interval i JOIN pay_period p ON p.id = $3
 		 WHERE i.employer_id = $1 AND i.employee_id = $2
 		   AND i.local_date BETWEEN p.starts_on AND p.ends_on
@@ -418,12 +526,12 @@ func checkAttendanceConflict(ctx context.Context, pool *pgxpool.Pool, employerID
 	if err == nil {
 		return "attendance evidence for " + clash + " created after approval; correction not yet approved", nil
 	}
-	loc, err := employer.EmploymentLocation(ctx, pool, employerID)
+	loc, err := employer.EmploymentLocation(ctx, q, employerID)
 	if err != nil {
 		return "", err
 	}
 	var pending string
-	err = pool.QueryRow(ctx,
+	err = q.QueryRow(ctx,
 		`SELECT (e.occurred_at AT TIME ZONE $5)::date::text FROM clock_event e JOIN pay_period p ON p.id = $3
 		 WHERE e.employer_id = $1 AND e.employee_id = $2
 		   AND (e.occurred_at AT TIME ZONE $5)::date BETWEEN p.starts_on AND p.ends_on
@@ -448,10 +556,10 @@ func checkAttendanceConflict(ctx context.Context, pool *pgxpool.Pool, employerID
 // trigger-normalized, so backdating the timestamp cannot dodge this;
 // the basis_seq leg additionally closes the D-RACE window where a
 // transaction that started first commits second.
-func checkCompConflict(ctx context.Context, pool *pgxpool.Pool, employerID, employeeID, periodID, sheetID string) (string, error) {
+func checkCompConflict(ctx context.Context, q qtx, employerID, employeeID, periodID, sheetID string) (string, error) {
 	var approvedAt *time.Time
 	var approvalSeq int64
-	err := pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT approved_at, basis_seq FROM timesheet WHERE employer_id = $1 AND id = $2`,
 		employerID, sheetID).Scan(&approvedAt, &approvalSeq)
 	if err != nil {
@@ -462,7 +570,7 @@ func checkCompConflict(ctx context.Context, pool *pgxpool.Pool, employerID, empl
 	}
 	var code, clash string
 	var corrected bool
-	err = pool.QueryRow(ctx,
+	err = q.QueryRow(ctx,
 		`SELECT c.code, c.effective_from::text, c.supersedes_id IS NOT NULL FROM compensation_line c
 		 JOIN employment_terms t ON t.employer_id = c.employer_id AND t.id = c.terms_id
 		 JOIN pay_period p ON p.id = $3
@@ -486,9 +594,9 @@ func checkCompConflict(ctx context.Context, pool *pgxpool.Pool, employerID, empl
 // requiredPacks maps the effective sheet's lines to statutory packs:
 // the base set always, plus leave, holiday, and overtime packs when
 // those pay codes appear.
-func requiredPacks(ctx context.Context, pool *pgxpool.Pool, employerID, sheetID string) ([]string, error) {
+func requiredPacks(ctx context.Context, q qtx, employerID, sheetID string) ([]string, error) {
 	packs := append([]string{}, BasePacks...)
-	rows, err := pool.Query(ctx,
+	rows, err := q.Query(ctx,
 		`SELECT DISTINCT pay_code FROM timesheet_line WHERE employer_id = $1 AND timesheet_id = $2`,
 		employerID, sheetID)
 	if err != nil {

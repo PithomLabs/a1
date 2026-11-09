@@ -15,6 +15,7 @@ import (
 	"github.com/PithomLabs/a1/internal/employer"
 	"github.com/PithomLabs/a1/internal/hr"
 	"github.com/PithomLabs/a1/internal/payroll"
+	"github.com/PithomLabs/a1/internal/rules"
 	"github.com/PithomLabs/a1/internal/timesheet"
 	"github.com/PithomLabs/a1/internal/wfm"
 )
@@ -709,13 +710,14 @@ func Register(e *echo.Echo, pool *pgxpool.Pool) error {
 			return fail(c, err)
 		}
 		var in struct {
-			Period string `json:"period"`
-			Kind   string `json:"kind"`
+			Period   string `json:"period"`
+			Kind     string `json:"kind"`
+			Corrects string `json:"corrects"`
 		}
 		if err := c.Bind(&in); err != nil {
 			return fail(c, apperr.New(apperr.CodeValidation, "invalid body: %v", err))
 		}
-		r, err := payroll.CreateRun(h.ctx, pool, h.employer.ID, in.Period, in.Kind, h.operator)
+		r, err := payroll.CreateRun(h.ctx, pool, h.employer.ID, in.Period, in.Kind, in.Corrects, h.operator)
 		if err != nil {
 			return fail(c, err)
 		}
@@ -763,29 +765,94 @@ func Register(e *echo.Echo, pool *pgxpool.Pool) error {
 		if err != nil {
 			return fail(c, err)
 		}
-		rows, err := pool.Query(h.ctx,
-			`SELECT pack, version, status FROM rule_pack_activation WHERE employer_id = $1 ORDER BY pack`, h.employer.ID)
+		list, err := rules.ListActivations(h.ctx, pool, h.employer.ID)
 		if err != nil {
-			return fail(c, apperr.FromDB(err, "list activations"))
+			return fail(c, err)
 		}
-		defer rows.Close()
-		type activation struct {
-			Pack    string `json:"pack"`
-			Version string `json:"version"`
-			Status  string `json:"status"`
+		return c.JSON(http.StatusOK, list)
+	})
+	v1.GET("/employers/:employer_id/payroll-runs/:run_id", func(c echo.Context) error {
+		h, err := resolve(c, pool, true)
+		if err != nil {
+			return fail(c, err)
 		}
-		out := []activation{}
-		for rows.Next() {
-			var a activation
-			if err := rows.Scan(&a.Pack, &a.Version, &a.Status); err != nil {
-				return fail(c, apperr.FromDB(err, "scan activation"))
-			}
-			out = append(out, a)
+		d, err := payroll.InspectRun(h.ctx, pool, h.employer.ID, c.Param("run_id"))
+		if err != nil {
+			return fail(c, err)
 		}
-		if err := rows.Err(); err != nil {
-			return fail(c, apperr.FromDB(err, "list activations"))
+		return c.JSON(http.StatusOK, d)
+	})
+	v1.POST("/employers/:employer_id/payroll-runs/:run_id/validate", func(c echo.Context) error {
+		h, err := resolve(c, pool, true)
+		if err != nil {
+			return fail(c, err)
 		}
-		return c.JSON(http.StatusOK, out)
+		var in struct {
+			OfferedVersion int `json:"offered_version"`
+		}
+		if err := c.Bind(&in); err != nil {
+			return fail(c, apperr.New(apperr.CodeValidation, "invalid body: %v", err))
+		}
+		v, err := payroll.ValidateRun(h.ctx, pool, h.employer.ID, c.Param("run_id"), in.OfferedVersion, h.operator)
+		if err != nil {
+			return fail(c, err)
+		}
+		return c.JSON(http.StatusOK, v)
+	})
+	v1.GET("/employers/:employer_id/snapshots/:snapshot_id", func(c echo.Context) error {
+		h, err := resolve(c, pool, true)
+		if err != nil {
+			return fail(c, err)
+		}
+		d, err := payroll.InspectSnapshot(h.ctx, pool, h.employer.ID, c.Param("snapshot_id"))
+		if err != nil {
+			return fail(c, err)
+		}
+		return c.JSON(http.StatusOK, d)
+	})
+	v1.POST("/employers/:employer_id/employees/:employee_ref/shg/:instruction_id/verify", func(c echo.Context) error {
+		h, err := resolve(c, pool, true)
+		if err != nil {
+			return fail(c, err)
+		}
+		e, err := hr.GetEmployee(h.ctx, pool, h.employer.ID, c.Param("employee_ref"))
+		if err != nil {
+			return fail(c, err)
+		}
+		if err := checkSHGOwner(h.ctx, pool, h.employer.ID, e.ID, c.Param("instruction_id")); err != nil {
+			return fail(c, err)
+		}
+		var in hr.SHGVerifyInput
+		if err := c.Bind(&in); err != nil {
+			return fail(c, apperr.New(apperr.CodeValidation, "invalid body: %v", err))
+		}
+		s, err := hr.VerifySHG(h.ctx, pool, h.employer.ID, c.Param("instruction_id"), in, h.operator)
+		if err != nil {
+			return fail(c, err)
+		}
+		return c.JSON(http.StatusOK, s)
+	})
+	v1.POST("/employers/:employer_id/employees/:employee_ref/shg/:instruction_id/correct", func(c echo.Context) error {
+		h, err := resolve(c, pool, true)
+		if err != nil {
+			return fail(c, err)
+		}
+		e, err := hr.GetEmployee(h.ctx, pool, h.employer.ID, c.Param("employee_ref"))
+		if err != nil {
+			return fail(c, err)
+		}
+		if err := checkSHGOwner(h.ctx, pool, h.employer.ID, e.ID, c.Param("instruction_id")); err != nil {
+			return fail(c, err)
+		}
+		var in hr.SHGCorrectInput
+		if err := c.Bind(&in); err != nil {
+			return fail(c, apperr.New(apperr.CodeValidation, "invalid body: %v", err))
+		}
+		s, err := hr.CorrectSHG(h.ctx, pool, h.employer.ID, c.Param("instruction_id"), in, h.operator)
+		if err != nil {
+			return fail(c, err)
+		}
+		return c.JSON(http.StatusOK, s)
 	})
 	return nil
 }
@@ -846,6 +913,21 @@ func checkLineOwner(ctx context.Context, pool *pgxpool.Pool, employerID, termsID
 	}
 	if !ok {
 		return apperr.New(apperr.CodeNotFound, "compensation %s not found under these terms", lineID)
+	}
+	return nil
+}
+
+// checkSHGOwner keeps the SHG verify/correct routes honest: the
+// instruction must belong to the employee named in the path.
+func checkSHGOwner(ctx context.Context, pool *pgxpool.Pool, employerID, employeeID, instructionID string) error {
+	var ok bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM shg_instruction WHERE employer_id = $1 AND id = $2 AND employee_id = $3)`,
+		employerID, instructionID, employeeID).Scan(&ok); err != nil {
+		return apperr.FromDB(err, "check SHG ownership")
+	}
+	if !ok {
+		return apperr.New(apperr.CodeNotFound, "SHG instruction %s not found for this employee", instructionID)
 	}
 	return nil
 }

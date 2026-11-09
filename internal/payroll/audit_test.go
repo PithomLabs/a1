@@ -31,7 +31,7 @@ func lastAudit(t *testing.T, pool *pgxpool.Pool, emp, action string) (actor, ser
 func TestExclusionAudited(t *testing.T) {
 	pool := testPool(t)
 	emp, period := setup(t, pool)
-	r, err := CreateRun(ctx(t), pool, emp, period, "", "run-op")
+	r, err := CreateRun(ctx(t), pool, emp, period, "", "", "run-op")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestExclusionAudited(t *testing.T) {
 func TestCreateRunAudited(t *testing.T) {
 	pool := testPool(t)
 	emp, period := setup(t, pool)
-	r, err := CreateRun(ctx(t), pool, emp, period, "", "op-2")
+	r, err := CreateRun(ctx(t), pool, emp, period, "", "", "op-2")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

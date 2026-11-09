@@ -33,7 +33,7 @@ tasks:
     cmds:
       # gofmt is scoped to module dirs on purpose: unscoped 'gofmt -w .'
       # would rewrite files under bchat/, which must stay read-only.
-      - test -z "$(gofmt -l cmd core internal modules migrations sdk examples tests)"
+      - test -z "$(gofmt -l cmd core internal modules migrations sdk tests)"
       - go vet ./...
       - task: validate:nodeps
 
